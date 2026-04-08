@@ -28,6 +28,12 @@ func supportReportEncodesDatesAsISO8601Strings() throws {
 }
 
 @Test
+func supportReportBuildsTimestampedSuggestedFilename() {
+    let filename = makeSupportReport().suggestedFilename()
+    #expect(filename == "glance-support-report-1970-01-01-000000.json")
+}
+
+@Test
 func supportReportFiltersEnvironmentToAllowListOnly() {
     let filtered = GlanceSupportReport.filteredEnvironment([
         "GLANCE_GEMINI_EXECUTABLE": "/opt/homebrew/bin/gemini",

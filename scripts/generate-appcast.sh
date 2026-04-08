@@ -1,12 +1,17 @@
 #!/bin/zsh
 set -euo pipefail
 
+source "$(cd "$(dirname "$0")" && pwd)/lib/release-env.sh"
+
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 DIST_DIR="${DIST_DIR:-$ROOT_DIR/dist}"
 ARTIFACT_PATH="${ARTIFACT_PATH:-$DIST_DIR/Glance.zip}"
 APPCAST_OUTPUT="${APPCAST_OUTPUT:-$DIST_DIR/appcast.xml}"
 DOWNLOAD_BASE_URL="${DOWNLOAD_BASE_URL:?Set DOWNLOAD_BASE_URL to the HTTPS directory hosting your Sparkle artifacts}"
 SPARKLE_PRIVATE_KEY_FILE="${SPARKLE_PRIVATE_KEY_FILE:?Set SPARKLE_PRIVATE_KEY_FILE to your Sparkle private key file path}"
+
+require_https_url_var DOWNLOAD_BASE_URL
+require_existing_file_var SPARKLE_PRIVATE_KEY_FILE
 
 if [[ ! -f "$ARTIFACT_PATH" ]]; then
   echo "error: update artifact not found at $ARTIFACT_PATH" >&2

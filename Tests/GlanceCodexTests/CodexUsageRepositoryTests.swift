@@ -79,6 +79,48 @@ func codexRepositoryLoadCapabilitiesUsesThirtyDayWindow() async throws {
     #expect(!capabilities.contains { $0.id.kind == .mcpTool && $0.id.namespace == "chat" && $0.id.name == "read_history" })
 }
 
+@Test
+func codexRepositoryWarnsWhenSessionContainsMalformedMcpEntries() async throws {
+    let fixture = try makeFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.tempRoot) }
+
+    try writeSession(
+        to: fixture.paths.sessionsDirectory.appending(path: "2026/04/04/session.jsonl"),
+        lines: [
+            sessionLine(daysAgo: 1, name: "mcp__chat__send_message"),
+            "{\"timestamp\":\"2026-04-04T00:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"mcp__broken\"}}",
+            "not json at all",
+        ]
+    )
+
+    let repository = CodexUsageRepository(
+        configLoader: CodexConfigLoader(paths: fixture.paths),
+        transcriptReader: CodexTranscriptUsageReader(paths: fixture.paths)
+    )
+    _ = try await repository.loadCapabilities(windows: [.day7], now: Date(timeIntervalSince1970: 1_744_000_000))
+    let warnings = await repository.currentWarnings()
+
+    #expect(warnings.contains("Some Codex session entries could not be parsed, so these results may be incomplete."))
+}
+
+@Test
+func codexReaderDoesNotTreatNonMcpFunctionCallsAsParseLoss() throws {
+    let fixture = try makeFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.tempRoot) }
+
+    try writeSession(
+        to: fixture.paths.sessionsDirectory.appending(path: "2026/04/04/session.jsonl"),
+        lines: [
+            sessionLine(daysAgo: 1, name: "apply_patch"),
+        ]
+    )
+
+    let result = try CodexTranscriptUsageReader(paths: fixture.paths).loadObservedEvents(since: .distantPast)
+    #expect(result.events.isEmpty)
+    #expect(result.skippedEntriesCount == 0)
+    #expect(result.skippedFilesCount == 0)
+}
+
 private func makeFixture() throws -> (tempRoot: URL, paths: CodexPaths) {
     let tempRoot = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)

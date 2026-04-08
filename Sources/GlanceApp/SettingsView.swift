@@ -363,16 +363,17 @@ struct GlanceSettingsView: View {
 
     private func exportSupportReport() {
         do {
-            let reportData = try makeSupportReport().jsonData()
+            let report = makeSupportReport()
+            let reportData = try report.jsonData()
             let panel = NSSavePanel()
             panel.allowedContentTypes = [.json]
-            panel.nameFieldStringValue = "glance-support-report.json"
+            panel.nameFieldStringValue = report.suggestedFilename()
             guard panel.runModal() == .OK, let url = panel.url else {
                 return
             }
 
             try reportData.write(to: url, options: .atomic)
-            supportStatus = "Support report exported."
+            supportStatus = "Support report exported as \(url.lastPathComponent)."
             supportStatusIsError = false
         } catch {
             supportStatus = "Could not export support report."

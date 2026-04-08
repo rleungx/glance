@@ -13,18 +13,30 @@ public struct CodexTranscriptUsageReader {
         let formatter = makeDateFormatter()
         var events: [CodexObservedToolEvent] = []
         var skippedFilesCount = 0
+        var skippedEntriesCount = 0
 
         for fileURL in sessionFiles {
             do {
                 let lines = try String(contentsOf: fileURL, encoding: .utf8).split(separator: "\n")
                 for line in lines where !line.isEmpty {
                     guard let data = line.data(using: .utf8) else { continue }
-                    guard let entry = try? decoder.decode(CodexSessionEntry.self, from: data) else { continue }
-                    guard let timestamp = formatter.date(from: entry.timestamp) else { continue }
+                    guard let entry = try? decoder.decode(CodexSessionEntry.self, from: data) else {
+                        skippedEntriesCount += 1
+                        continue
+                    }
+                    guard let timestamp = formatter.date(from: entry.timestamp) else {
+                        skippedEntriesCount += 1
+                        continue
+                    }
                     guard timestamp >= cutoffDate else { continue }
                     guard let functionCall = entry.payload.functionCall else { continue }
                     let parsedName = parseFunctionName(functionCall.name)
-                    guard let parsedName else { continue }
+                    guard let parsedName else {
+                        if functionCall.name.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("mcp__") {
+                            skippedEntriesCount += 1
+                        }
+                        continue
+                    }
                     events.append(CodexObservedToolEvent(timestamp: timestamp, serverName: parsedName.serverName, toolName: parsedName.toolName))
                 }
             } catch {
@@ -32,7 +44,7 @@ public struct CodexTranscriptUsageReader {
             }
         }
 
-        return CodexTranscriptLoadResult(events: events, skippedFilesCount: skippedFilesCount)
+        return CodexTranscriptLoadResult(events: events, skippedFilesCount: skippedFilesCount, skippedEntriesCount: skippedEntriesCount)
     }
 
     private func sessionFiles() -> [URL] {

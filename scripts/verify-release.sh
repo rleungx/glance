@@ -1,6 +1,8 @@
 #!/bin/zsh
 set -euo pipefail
 
+source "$(cd "$(dirname "$0")" && pwd)/lib/release-env.sh"
+
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 DIST_DIR="${DIST_DIR:-$ROOT_DIR/dist}"
 APP_BUNDLE="${APP_BUNDLE:-$DIST_DIR/Glance.app}"
@@ -10,6 +12,10 @@ INFO_PLIST="$APP_BUNDLE/Contents/Info.plist"
 PLISTBUDDY="/usr/libexec/PlistBuddy"
 EXECUTABLE_PATH="$APP_BUNDLE/Contents/MacOS/Glance"
 FRAMEWORK_PATH="$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
+
+if [[ -f "$APPCAST_PATH" ]]; then
+  require_https_url_var DOWNLOAD_BASE_URL
+fi
 
 if [[ ! -d "$APP_BUNDLE" ]]; then
   echo "error: app bundle not found at $APP_BUNDLE" >&2

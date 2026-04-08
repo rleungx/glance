@@ -23,7 +23,7 @@ public actor CodexUsageRepository: WindowedCapabilityRepository, WarningReportin
         let maxWindow = windows.map(\.rawValue).max() ?? 30
         let cutoffDate = Calendar.current.date(byAdding: .day, value: -maxWindow, to: now) ?? now
         let loadResult = try transcriptReader.loadObservedEvents(since: cutoffDate)
-        warnings = loadResult.skippedFilesCount > 0 ? ["Some Codex sessions were skipped, so these results may be incomplete."] : []
+        warnings = makeWarnings(from: loadResult)
         let eventsByWindow = bucket(events: loadResult.events, windows: windows, now: now)
 
         var output: [RollingWindow: [CapabilityUsage]] = [:]
@@ -35,6 +35,17 @@ public actor CodexUsageRepository: WindowedCapabilityRepository, WarningReportin
 
     public func currentWarnings() async -> [String] {
         warnings
+    }
+
+    private func makeWarnings(from loadResult: CodexTranscriptLoadResult) -> [String] {
+        var warnings: [String] = []
+        if loadResult.skippedFilesCount > 0 {
+            warnings.append("Some Codex sessions could not be read, so these results may be incomplete.")
+        }
+        if loadResult.skippedEntriesCount > 0 {
+            warnings.append("Some Codex session entries could not be parsed, so these results may be incomplete.")
+        }
+        return warnings
     }
 
     private func buildCapabilities(installedSkills: [CodexInstalledSkill], events: [CodexObservedToolEvent]) -> [CapabilityUsage] {

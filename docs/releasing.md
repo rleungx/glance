@@ -12,15 +12,30 @@ This repository now expects Sparkle-based updates for direct-download releases.
 - A configured `notarytool` keychain profile for `scripts/notarize.sh`
 - A Sparkle private EdDSA key file for `scripts/generate-appcast.sh`
 
+## Release configuration file
+
+Copy `Packaging/macOS/release.env.example` to `Packaging/macOS/release.env` and fill in real values.
+
+All release scripts automatically source `Packaging/macOS/release.env` if it exists. You can override that path with:
+
+```sh
+RELEASE_ENV_FILE=/path/to/custom-release.env ./scripts/build-app.sh
+```
+
+The shared loader now validates common failure cases early:
+
+- required variables are present when a script needs them
+- release feed/download URLs use `https`
+- required file paths (for example `SPARKLE_PRIVATE_KEY_FILE`) exist before the script continues
+- placeholder values like `REPLACE_WITH_SPARKLE_PUBLIC_KEY` are rejected before build packaging proceeds
+
 ## Local rehearsal without signing credentials
 
 You can verify that the app bundle assembles correctly before you have signing/notarization credentials:
 
 ```sh
-VERSION=1.0.0 \
-BUILD_NUMBER=1 \
-APPCAST_URL=https://updates.example.org/appcast.xml \
-SPARKLE_PUBLIC_ED_KEY=dummy-public-key \
+cp Packaging/macOS/release.env.example Packaging/macOS/release.env
+# edit Packaging/macOS/release.env with rehearsal-safe values
 ./scripts/build-app.sh
 ```
 
@@ -46,13 +61,13 @@ At that point you can validate structure, but `scripts/verify-release.sh` will s
 1. Build the app bundle:
 
    ```sh
-   VERSION=1.0.0 BUILD_NUMBER=1 APPCAST_URL=https://downloads.example.com/appcast.xml SPARKLE_PUBLIC_ED_KEY=... ./scripts/build-app.sh
+   ./scripts/build-app.sh
    ```
 
 2. Code sign the app bundle:
 
    ```sh
-   CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./scripts/codesign.sh
+   ./scripts/codesign.sh
    ```
 
 3. Package the Sparkle update archive:
@@ -64,13 +79,13 @@ At that point you can validate structure, but `scripts/verify-release.sh` will s
 4. Notarize, staple, and rebuild the zip from the stapled app:
 
    ```sh
-   NOTARY_PROFILE=glance-notary ./scripts/notarize.sh
+   ./scripts/notarize.sh
    ```
 
 5. Generate the appcast:
 
    ```sh
-   DOWNLOAD_BASE_URL=https://downloads.example.com/releases/1.0.0 SPARKLE_PRIVATE_KEY_FILE="$HOME/.config/sparkle/ed25519.pem" ./scripts/generate-appcast.sh
+   ./scripts/generate-appcast.sh
    ```
 
 6. Verify the release bundle and published artifacts:
@@ -96,6 +111,8 @@ The repository now contains the Sparkle wiring and release script skeleton, but 
 
 Until those values are supplied, the project is release-prepared but not release-complete.
 
+Do not commit `Packaging/macOS/release.env`; keep it local or inject those values via CI secrets.
+
 ## Feed overrides for staging
 
 You can override the feed URL at runtime for local/staging builds with:
@@ -105,3 +122,12 @@ You can override the feed URL at runtime for local/staging builds with:
 The app still requires a valid `SUPublicEDKey` in bundle metadata before the updater will enable itself.
 
 If `GLANCE_SPARKLE_FEED_URL` is invalid, the app falls back to the bundle’s `SUFeedURL`.
+
+## Support reports
+
+Glance can export a JSON support report from Settings.
+
+- Use **Copy Support Report** to put the current report on the clipboard.
+- Use **Export Support Report…** to save a timestamped JSON file.
+
+The exported report is intended for troubleshooting local source issues and includes current source diagnostics, policy settings, and a small allowlisted subset of environment configuration. It does not include transcript contents or full environment dumps.

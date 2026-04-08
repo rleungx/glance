@@ -1,6 +1,8 @@
 #!/bin/zsh
 set -euo pipefail
 
+source "$(cd "$(dirname "$0")" && pwd)/lib/release-env.sh"
+
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 DIST_DIR="${DIST_DIR:-$ROOT_DIR/dist}"
 BUILD_CONFIGURATION="${BUILD_CONFIGURATION:-release}"
@@ -24,6 +26,12 @@ BUILD_NUMBER="${BUILD_NUMBER:-1}"
 BUNDLE_IDENTIFIER="${BUNDLE_IDENTIFIER:-com.rleungx.Glance}"
 APPCAST_URL="${APPCAST_URL:-https://example.com/appcast.xml}"
 SPARKLE_PUBLIC_ED_KEY="${SPARKLE_PUBLIC_ED_KEY:-REPLACE_WITH_SPARKLE_PUBLIC_KEY}"
+
+require_env_var VERSION
+require_env_var BUILD_NUMBER
+require_env_var BUNDLE_IDENTIFIER
+require_https_url_var APPCAST_URL
+assert_non_placeholder_value SPARKLE_PUBLIC_ED_KEY REPLACE_WITH_SPARKLE_PUBLIC_KEY
 
 rm -rf "$APP_BUNDLE"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$FRAMEWORKS_DIR"

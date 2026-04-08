@@ -2,6 +2,7 @@
 /.build
 /Packages
 /dist
+/Packaging/macOS/release.env
 xcuserdata/
 DerivedData/
 .swiftpm/configuration/registries.json

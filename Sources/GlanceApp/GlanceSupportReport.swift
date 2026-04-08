@@ -71,6 +71,14 @@ struct GlanceSupportReport: Codable, Equatable {
         return string
     }
 
+    func suggestedFilename() -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd-HHmmss"
+        return "glance-support-report-\(formatter.string(from: generatedAt)).json"
+    }
+
     static func filteredEnvironment(_ environment: [String: String]) -> [String: String] {
         let allowedKeys = ["GLANCE_GEMINI_EXECUTABLE", "GLANCE_SPARKLE_FEED_URL"]
         return allowedKeys.reduce(into: [String: String]()) { partialResult, key in

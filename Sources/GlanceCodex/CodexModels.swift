@@ -25,10 +25,12 @@ public struct CodexObservedToolEvent: Sendable {
 public struct CodexTranscriptLoadResult: Sendable {
     public let events: [CodexObservedToolEvent]
     public let skippedFilesCount: Int
+    public let skippedEntriesCount: Int
 
-    public init(events: [CodexObservedToolEvent], skippedFilesCount: Int) {
+    public init(events: [CodexObservedToolEvent], skippedFilesCount: Int, skippedEntriesCount: Int) {
         self.events = events
         self.skippedFilesCount = skippedFilesCount
+        self.skippedEntriesCount = skippedEntriesCount
     }
 }
 

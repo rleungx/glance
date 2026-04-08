@@ -1,6 +1,8 @@
 #!/bin/zsh
 set -euo pipefail
 
+source "$(cd "$(dirname "$0")" && pwd)/lib/release-env.sh"
+
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 DIST_DIR="${DIST_DIR:-$ROOT_DIR/dist}"
 APP_BUNDLE="${APP_BUNDLE:-$DIST_DIR/Glance.app}"
