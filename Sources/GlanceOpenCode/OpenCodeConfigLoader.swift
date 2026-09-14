@@ -47,7 +47,16 @@ public final class OpenCodeConfigLoader {
     }
 
     public func hasMCPConfiguration() -> Bool {
-        fileManager.fileExists(atPath: paths.opencodeConfigURL.path)
+        guard let data = try? Data(contentsOf: paths.opencodeConfigURL),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return false
+        }
+        // An unrelated global preference does not define the installed MCP set.
+        return object["mcp"] != nil
+    }
+
+    public var evidenceSources: [String] {
+        [paths.databaseURL.path, paths.opencodeConfigURL.path, paths.skillsDirectory.path]
     }
 }
 

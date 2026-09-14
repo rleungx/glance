@@ -12,6 +12,7 @@ INFO_PLIST="$APP_BUNDLE/Contents/Info.plist"
 PLISTBUDDY="/usr/libexec/PlistBuddy"
 EXECUTABLE_PATH="$APP_BUNDLE/Contents/MacOS/Glance"
 FRAMEWORK_PATH="$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
+RESOURCE_BUNDLE_PATH="$APP_BUNDLE/Contents/Resources/Glance_GlanceApp.bundle"
 
 if [[ -f "$APPCAST_PATH" ]]; then
   require_https_url_var DOWNLOAD_BASE_URL
@@ -39,6 +40,11 @@ if [[ ! -d "$FRAMEWORK_PATH" ]]; then
   echo "error: Sparkle.framework not found in app bundle" >&2
   exit 1
 fi
+
+[[ -d "$RESOURCE_BUNDLE_PATH" ]] || die "Glance resource bundle is missing"
+otool -l "$EXECUTABLE_PATH" | grep -F '@executable_path/../Frameworks' >/dev/null \
+  || die "app executable is missing its bundled-framework runpath"
+"$EXECUTABLE_PATH" --check-bundle
 
 feed_url="$($PLISTBUDDY -c "Print :SUFeedURL" "$INFO_PLIST")"
 public_key="$($PLISTBUDDY -c "Print :SUPublicEDKey" "$INFO_PLIST")"

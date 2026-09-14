@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import GlanceCore
 
@@ -9,6 +10,7 @@ final class GlanceStore: ObservableObject {
     @Published private(set) var lastRefreshAt: Date?
     @Published private(set) var errorMessage: String?
     @Published private(set) var noticeMessage: String?
+    @Published private(set) var usageEvidence = UsageEvidence()
     @Published private(set) var currentSource: GlanceSource
     @Published private(set) var selectedWindow: RollingWindow
     @Published private(set) var policy: RankingPolicy
@@ -23,6 +25,7 @@ final class GlanceStore: ObservableObject {
     private let shouldMaintainRefreshLoop: Bool
     private var inFlightRefresh: (key: RefreshKey, task: Task<Void, Never>)?
     private var pendingRefreshSources: Set<String> = []
+    private var sourceGeneration = UUID()
 
     init(
         sourceRegistry: any GlanceSourceResolving = LiveGlanceSourceRegistry(),
@@ -74,7 +77,10 @@ final class GlanceStore: ObservableObject {
 
     var summaryLine: String {
         let snapshot = activeSnapshot
-        return "\(snapshot.skills.count) skills · \(snapshot.mcpServers.count) MCPs · \(visibleStale.count) stale"
+        let history = staleSnapshot
+        let covered = history.evidence.covers(since: history.generatedAt.addingTimeInterval(-Double(max(policy.staleAfterDays, policy.removalAfterDays)) * 86_400), through: history.generatedAt)
+        let cleanup = covered && errorMessage == nil ? "\(visibleStale.count) stale" : "cleanup paused"
+        return "\(snapshot.skills.count) skills · \(snapshot.mcpServers.count) MCPs · \(cleanup)"
     }
 
     var availableSources: [GlanceSource] {
@@ -102,19 +108,21 @@ final class GlanceStore: ObservableObject {
     }
 
     var visibleStale: [CapabilityUsage] {
-        staleSnapshot.stale.filter { $0.id.kind != .mcpTool }
+        errorMessage == nil ? staleSnapshot.stale.filter { $0.id.kind != .mcpTool } : []
     }
 
     var visibleRemovalCandidates: [CapabilityUsage] {
-        staleSnapshot.removalCandidates.filter { $0.id.kind != .mcpTool }
+        errorMessage == nil ? staleSnapshot.removalCandidates.filter { $0.id.kind != .mcpTool } : []
     }
 
     var activeSnapshot: RankingSnapshot {
-        windowedSnapshots[selectedWindow] ?? snapshot
+        let result = currentDiagnostics.supportsRollingWindows ? windowedSnapshots[selectedWindow] : snapshot
+        guard let result, result.sourceID == currentSource.id else { return .empty }
+        return result
     }
 
     var staleSnapshot: RankingSnapshot {
-        windowedSnapshots[cleanupWindow] ?? windowedSnapshots[.day30] ?? activeSnapshot
+        windowedSnapshots[cleanupWindow] ?? .empty
     }
 
     var availableWindows: [RollingWindow] {
@@ -122,12 +130,7 @@ final class GlanceStore: ObservableObject {
     }
 
     private var cleanupWindow: RollingWindow {
-        let maxDays = max(policy.staleAfterDays, policy.removalAfterDays)
-        if maxDays <= 30 { return .day30 }
-        if maxDays <= 45 { return .day45 }
-        if maxDays <= 60 { return .day60 }
-        if maxDays <= 90 { return .day90 }
-        return .day120
+        .allTime
     }
 
     func selectSource(id: String) {
@@ -141,19 +144,21 @@ final class GlanceStore: ObservableObject {
         guard source != currentSource else { return }
 
         pendingRefreshSources.removeAll()
+        sourceGeneration = UUID()
+        inFlightRefresh?.task.cancel()
+        inFlightRefresh = nil
+        refreshInFlightCount = 0
+        isRefreshing = false
         let diagnostics = sourceRegistry.diagnostics(for: source)
         currentSource = source
         repository = sourceRegistry.makeRepository(for: source)
         selectionStore.saveSelectedSourceID(source.id)
-        if diagnostics.readiness == .ready {
-            errorMessage = nil
-        } else {
-            snapshot = .empty
-            windowedSnapshots = [:]
-            lastRefreshAt = nil
-            errorMessage = diagnostics.summary
-            noticeMessage = nil
-        }
+        snapshot = .empty
+        windowedSnapshots = [:]
+        lastRefreshAt = nil
+        noticeMessage = nil
+        usageEvidence = UsageEvidence()
+        errorMessage = diagnostics.readiness == .ready ? nil : diagnostics.summary
 
         Task {
             await refresh()
@@ -167,6 +172,8 @@ final class GlanceStore: ObservableObject {
         if let refreshedSnapshot = windowedSnapshots[window] {
             snapshot = refreshedSnapshot
         } else if currentDiagnostics.supportsRollingWindows {
+            snapshot = .empty
+            lastRefreshAt = nil
             pendingRefreshSources.insert(currentSource.id)
             Task {
                 await refresh()
@@ -187,19 +194,20 @@ final class GlanceStore: ObservableObject {
     }
 
     func refresh() async {
-        let key = RefreshKey(sourceID: currentSource.id, cleanupWindow: cleanupWindow)
-        if let inFlightRefresh, inFlightRefresh.key.sourceID == key.sourceID {
+        let key = RefreshKey(sourceID: currentSource.id, generation: sourceGeneration)
+        if let inFlightRefresh, inFlightRefresh.key == key {
             await inFlightRefresh.task.value
-            if pendingRefreshSources.remove(key.sourceID) != nil, currentSource.id == key.sourceID {
+            if key.generation == sourceGeneration, pendingRefreshSources.remove(key.sourceID) != nil {
                 await refresh()
             }
             return
         }
 
         pendingRefreshSources.remove(key.sourceID)
+        let requestedRepository = repository
         let task = Task<Void, Never> { [weak self] in
             guard let self else { return }
-            await self.performRefresh(for: key)
+            await self.performRefresh(for: key, repository: requestedRepository)
         }
         inFlightRefresh = (key, task)
         await task.value
@@ -238,14 +246,15 @@ final class GlanceStore: ObservableObject {
         }
     }
 
-    private func performRefresh(for key: RefreshKey) async {
-        let requestedSourceID = currentSource.id
-        let requestedRepository = repository
+    private func performRefresh(for key: RefreshKey, repository requestedRepository: any CapabilityRepository) async {
+        guard key.generation == sourceGeneration, !Task.isCancelled else { return }
         beginRefresh()
         defer {
-            endRefresh()
-            if inFlightRefresh?.key == key {
-                inFlightRefresh = nil
+            if key.generation == sourceGeneration {
+                endRefresh()
+                if inFlightRefresh?.key == key {
+                    inFlightRefresh = nil
+                }
             }
         }
 
@@ -257,33 +266,38 @@ final class GlanceStore: ObservableObject {
         }
 
         do {
-            if let windowedRepository = requestedRepository as? any WindowedCapabilityRepository {
+            let now = Date.now
+            let capabilitiesByWindow: [RollingWindow: [CapabilityUsage]]
+            var evidence = UsageEvidence()
+            var warning: String?
+            if let evidenceRepository = requestedRepository as? any EvidenceReportingRepository {
+                let result = try await evidenceRepository.loadUsage(windows: Array(Set([selectedWindow, cleanupWindow])), now: now)
+                capabilitiesByWindow = result.windows
+                evidence = result.evidence
+                warning = ([evidence.summary] + result.warnings.filter { $0 != evidence.summary }).joined(separator: "\n")
+            } else if let windowedRepository = requestedRepository as? any WindowedCapabilityRepository {
                 let requestedWindows = Array(Set([selectedWindow, cleanupWindow])).sorted { $0.rawValue < $1.rawValue }
-                let capabilitiesByWindow = try await windowedRepository.loadCapabilities(windows: requestedWindows, now: .now)
-                guard requestedSourceID == currentSource.id else {
-                    return
-                }
-                windowedSnapshots = capabilitiesByWindow.mapValues { capabilities in
-                    CapabilityRanker.buildSnapshot(from: capabilities, policy: policy, now: .now)
-                }
-                snapshot = windowedSnapshots[selectedWindow] ?? windowedSnapshots[.day30] ?? .empty
+                capabilitiesByWindow = try await windowedRepository.loadCapabilities(windows: requestedWindows, now: now)
             } else {
                 let capabilities = try await requestedRepository.loadCapabilities()
-                guard requestedSourceID == currentSource.id else {
-                    return
-                }
-                snapshot = CapabilityRanker.buildSnapshot(from: capabilities, policy: policy, now: .now)
-                windowedSnapshots = [:]
+                capabilitiesByWindow = [.allTime: capabilities]
             }
-            lastRefreshAt = .now
+            if !(requestedRepository is any EvidenceReportingRepository), let warningRepository = requestedRepository as? any WarningReportingRepository {
+                warning = await warningRepository.currentWarnings().first
+            }
+            // Publish one generation atomically, after the last suspension point.
+            guard key.generation == sourceGeneration, !Task.isCancelled else { return }
+            windowedSnapshots = [:]
+            for (window, capabilities) in capabilitiesByWindow {
+                windowedSnapshots[window] = CapabilityRanker.buildSnapshot(from: capabilities, policy: policy, now: now, evidence: evidence, sourceID: key.sourceID, window: window)
+            }
+            snapshot = currentDiagnostics.supportsRollingWindows ? (windowedSnapshots[selectedWindow] ?? .empty) : (windowedSnapshots[.allTime] ?? .empty)
+            usageEvidence = evidence
+            lastRefreshAt = now
             errorMessage = nil
-            if let warningRepository = requestedRepository as? any WarningReportingRepository {
-                noticeMessage = await warningRepository.currentWarnings().first
-            } else {
-                noticeMessage = nil
-            }
+            noticeMessage = warning
         } catch {
-            guard requestedSourceID == currentSource.id else {
+            guard key.generation == sourceGeneration, !Task.isCancelled else {
                 return
             }
             noticeMessage = nil
@@ -328,5 +342,5 @@ final class GlanceStore: ObservableObject {
 
 private struct RefreshKey: Equatable {
     let sourceID: String
-    let cleanupWindow: RollingWindow
+    let generation: UUID
 }

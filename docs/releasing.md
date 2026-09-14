@@ -45,7 +45,18 @@ This should produce `dist/Glance.app` with:
 - `Contents/Frameworks/Sparkle.framework`
 - `Contents/Resources/Glance_GlanceApp.bundle`
 
-At that point you can validate structure, but `scripts/verify-release.sh` will still fail until the app is properly codesigned, notarized, and configured with non-placeholder production values.
+The executable includes an `@executable_path/../Frameworks` runpath and resolves its
+SwiftPM resources from `Contents/Resources`. Check both without opening the menu
+or loading local source data:
+
+```sh
+dist/Glance.app/Contents/MacOS/Glance --check-bundle
+```
+
+Repeat this check after copying the app outside the checkout. It must print
+`Glance bundle loaded successfully` without relying on build products.
+`scripts/verify-release.sh` includes this check, but will still fail until the app
+is properly codesigned, notarized, and configured with production values.
 
 ## Release scripts
 
@@ -53,7 +64,7 @@ At that point you can validate structure, but `scripts/verify-release.sh` will s
 - `scripts/codesign.sh` — code signs embedded frameworks first, then the app bundle.
 - `scripts/package-update-zip.sh` — creates a Sparkle-compatible zip (`dist/Glance.zip`).
 - `scripts/notarize.sh` — submits the archive for notarization and staples the app.
-- `scripts/generate-appcast.sh` — generates `dist/appcast.xml` using Sparkle’s `generate_appcast` tool.
+- `scripts/generate-appcast.sh` — generates `dist/appcast.xml` using Sparkle’s `generate_appcast` tool. Sparkle scans the directory containing `ARTIFACT_PATH`; keep only intended update archives in that directory. `APPCAST_OUTPUT` is passed with Sparkle's `-o` option. The download directory URL is normalized to end with `/` so its last path component is preserved.
 - `scripts/verify-release.sh` — verifies bundle metadata, placeholder removal, code signing, and optional zip/appcast outputs.
 
 ## Minimal release flow

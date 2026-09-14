@@ -2,7 +2,31 @@ import Foundation
 import GlanceCore
 
 struct GlanceSupportReport: Codable, Equatable {
-    static let currentReportVersion = 1
+    static let currentReportVersion = 2
+
+    struct DataQuality: Codable, Equatable {
+        let completeness: UsageCompleteness
+        let filesRead: Int
+        let skippedFiles: Int
+        let skippedRecords: Int
+        let unmatchedRecords: Int
+        let duplicates: Int
+        let inferredIdentities: Int
+        let observedFrom: Date?
+        let observedThrough: Date?
+
+        init(_ evidence: UsageEvidence) {
+            completeness = evidence.completeness
+            filesRead = evidence.filesRead
+            skippedFiles = evidence.skippedFiles
+            skippedRecords = evidence.skippedRecords
+            unmatchedRecords = evidence.unmatchedRecords
+            duplicates = evidence.duplicates
+            inferredIdentities = evidence.inferredIdentities
+            observedFrom = evidence.observedFrom
+            observedThrough = evidence.observedThrough
+        }
+    }
 
     struct AppInfo: Codable, Equatable {
         let name: String
@@ -28,6 +52,7 @@ struct GlanceSupportReport: Codable, Equatable {
     let lastRefreshAt: Date?
     let errorMessage: String?
     let noticeMessage: String?
+    let dataQuality: DataQuality?
 
     init(
         generatedAt: Date,
@@ -40,7 +65,8 @@ struct GlanceSupportReport: Codable, Equatable {
         policy: RankingPolicy,
         lastRefreshAt: Date?,
         errorMessage: String?,
-        noticeMessage: String?
+        noticeMessage: String?,
+        evidence: UsageEvidence? = nil
     ) {
         self.reportVersion = Self.currentReportVersion
         self.generatedAt = generatedAt
@@ -54,6 +80,7 @@ struct GlanceSupportReport: Codable, Equatable {
         self.lastRefreshAt = lastRefreshAt
         self.errorMessage = errorMessage
         self.noticeMessage = noticeMessage
+        self.dataQuality = evidence.map(DataQuality.init)
     }
 
     func jsonData() throws -> Data {

@@ -30,6 +30,22 @@ public struct GeminiExecutableLocator: Sendable {
         executableURL() != nil
     }
 
+    /// GUI applications do not inherit the user's interactive shell PATH.
+    public func processEnvironment(for executableURL: URL) -> [String: String] {
+        var result = environment
+        let inheritedPaths = (environment[EnvironmentKey.path] ?? "").split(separator: ":").map(String.init)
+        let runtimePaths = [
+            executableURL.deletingLastPathComponent().path,
+            executableURL.resolvingSymlinksInPath().deletingLastPathComponent().path,
+            "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
+        ]
+        var seen = Set<String>()
+        result[EnvironmentKey.path] = (inheritedPaths + runtimePaths)
+            .filter { $0.hasPrefix("/") && seen.insert($0).inserted }
+            .joined(separator: ":")
+        return result
+    }
+
     private func candidates() -> [URL] {
         var urls: [URL] = []
 

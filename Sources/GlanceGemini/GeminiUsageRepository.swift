@@ -1,7 +1,7 @@
 import Foundation
 import GlanceCore
 
-public actor GeminiUsageRepository: WindowedCapabilityRepository, WarningReportingRepository {
+public actor GeminiUsageRepository: EvidenceReportingRepository, WarningReportingRepository {
     private let configLoader: GeminiConfigLoader
     private let transcriptReader: GeminiTranscriptUsageReader
     private var warnings: [String] = []
@@ -18,10 +18,10 @@ public actor GeminiUsageRepository: WindowedCapabilityRepository, WarningReporti
         try await loadCapabilities(windows: [.day30], now: .now)[.day30] ?? []
     }
 
-    public func loadCapabilities(windows: [RollingWindow], now: Date) async throws -> [RollingWindow: [CapabilityUsage]] {
+    public func loadUsage(windows: [RollingWindow], now: Date) async throws -> UsageLoadResult {
         let installedSkills = try configLoader.loadInstalledSkills().filter(\.enabled)
         let configuredServers = try configLoader.loadConfiguredMCPServers().filter(\.enabled)
-        let installedSkillMap = Dictionary(uniqueKeysWithValues: installedSkills.map { ($0.name.lowercased(), $0.name) })
+        let installedSkillMap = Dictionary(installedSkills.map { ($0.name.lowercased(), $0.name) }, uniquingKeysWith: { first, _ in first })
         let serverNames = Set(configuredServers.map { $0.name.lowercased() })
         let serverNameCandidates = serverNames.sorted { lhs, rhs in
             if lhs.count != rhs.count {
@@ -29,11 +29,27 @@ public actor GeminiUsageRepository: WindowedCapabilityRepository, WarningReporti
             }
             return lhs < rhs
         }
-        let maxWindow = windows.map(\.rawValue).max() ?? 30
-        let cutoffDate = Calendar.current.date(byAdding: .day, value: -maxWindow, to: now) ?? now
+        let cutoffDate = windows.map { $0.cutoffDate(relativeTo: now) }.min() ?? .distantPast
         let loadResult = try transcriptReader.loadObservedEvents(since: cutoffDate)
         warnings = loadResult.skippedFilesCount > 0 ? ["Some Gemini sessions were skipped, so these results may be incomplete."] : []
-        let eventsByWindow = bucket(events: loadResult.events, windows: windows, now: now)
+        var evidence = loadResult.evidence
+        evidence.sources += configLoader.existingPaths()
+        if configLoader.hasUnrecognizedOutput {
+            evidence.skippedRecords += 1
+            evidence.completeness = .partial
+            warnings.append("Gemini inventory output was not recognized; installed capabilities may be incomplete.")
+        }
+        let events = loadResult.events.filter { $0.timestamp <= now }
+        evidence.unmatchedRecords = events.filter { event in
+            let name = event.toolName.lowercased()
+            if name == "activate_skill" { return event.args["name"]?.stringValue.map { installedSkillMap[$0.lowercased()] == nil } ?? true }
+            return name.hasPrefix("mcp_") && parseMcpToolName(name, serverNameCandidates: serverNameCandidates) == nil
+        }.count
+        if evidence.unmatchedRecords > 0 { evidence.completeness = .partial }
+        evidence.skippedRecords += loadResult.events.count - events.count
+        if evidence.skippedRecords > 0 { evidence.completeness = .partial }
+        evidence.observedThrough = events.map(\.timestamp).max()
+        let eventsByWindow = bucket(events: events, windows: windows, now: now)
 
         var output: [RollingWindow: [CapabilityUsage]] = [:]
         for window in windows {
@@ -46,7 +62,10 @@ public actor GeminiUsageRepository: WindowedCapabilityRepository, WarningReporti
             )
         }
 
-        return output
+        if evidence.completeness == .partial || evidence.completeness == .unavailable {
+            warnings.append(evidence.summary)
+        }
+        return UsageLoadResult(windows: output, evidence: evidence, warnings: warnings)
     }
 
     public func currentWarnings() async -> [String] {
@@ -63,12 +82,12 @@ public actor GeminiUsageRepository: WindowedCapabilityRepository, WarningReporti
         var capabilities: [CapabilityID: CapabilityUsage] = [:]
         for skill in installedSkills {
             let id = CapabilityID(kind: .skill, name: skill.name)
-            capabilities[id] = CapabilityUsage(id: id, usageCount: 0, installedButUnused: true)
+            capabilities[id] = CapabilityUsage(id: id, usageCount: 0, installedButUnused: false)
         }
         for server in configuredServers {
             let normalized = server.name.lowercased()
             let id = CapabilityID(kind: .mcpServer, namespace: normalized, name: normalized)
-            capabilities[id] = CapabilityUsage(id: id, usageCount: 0, installedButUnused: true)
+            capabilities[id] = CapabilityUsage(id: id, usageCount: 0, installedButUnused: false)
         }
 
         var aggregatedServerUsage: [CapabilityID: CapabilityUsage] = [:]
@@ -80,7 +99,7 @@ public actor GeminiUsageRepository: WindowedCapabilityRepository, WarningReporti
                let skillName = event.args["name"]?.stringValue?.lowercased(),
                let canonical = installedSkillMap[skillName] {
                 let id = CapabilityID(kind: .skill, name: canonical)
-                capabilities[id] = merge(capabilities[id] ?? CapabilityUsage(id: id, usageCount: 0, installedButUnused: true), with: singleEventUsage(id: id, timestamp: event.timestamp, status: event.status))
+                capabilities[id] = merge(capabilities[id] ?? CapabilityUsage(id: id, usageCount: 0, installedButUnused: false), with: singleEventUsage(id: id, timestamp: event.timestamp, status: event.status, reference: event.reference))
                 continue
             }
 
@@ -89,14 +108,14 @@ public actor GeminiUsageRepository: WindowedCapabilityRepository, WarningReporti
             }
 
             let toolID = CapabilityID(kind: .mcpTool, namespace: parsed.serverName, name: parsed.toolName)
-            capabilities[toolID] = merge(capabilities[toolID] ?? CapabilityUsage(id: toolID, usageCount: 0, installedButUnused: true), with: singleEventUsage(id: toolID, timestamp: event.timestamp, status: event.status))
+            capabilities[toolID] = merge(capabilities[toolID] ?? CapabilityUsage(id: toolID, usageCount: 0, installedButUnused: false), with: singleEventUsage(id: toolID, timestamp: event.timestamp, status: event.status, reference: event.reference))
 
             let serverID = CapabilityID(kind: .mcpServer, namespace: parsed.serverName, name: parsed.serverName)
-            aggregatedServerUsage[serverID] = merge(aggregatedServerUsage[serverID] ?? CapabilityUsage(id: serverID, usageCount: 0, installedButUnused: true), with: singleEventUsage(id: serverID, timestamp: event.timestamp, status: event.status))
+            aggregatedServerUsage[serverID] = merge(aggregatedServerUsage[serverID] ?? CapabilityUsage(id: serverID, usageCount: 0, installedButUnused: false), with: singleEventUsage(id: serverID, timestamp: event.timestamp, status: event.status, reference: event.reference))
         }
 
         for (serverID, usage) in aggregatedServerUsage {
-            capabilities[serverID] = merge(capabilities[serverID] ?? CapabilityUsage(id: serverID, usageCount: 0, installedButUnused: true), with: usage)
+            capabilities[serverID] = merge(capabilities[serverID] ?? CapabilityUsage(id: serverID, usageCount: 0, installedButUnused: false), with: usage)
         }
 
         return Array(capabilities.values)
@@ -107,9 +126,9 @@ public actor GeminiUsageRepository: WindowedCapabilityRepository, WarningReporti
         windows: [RollingWindow],
         now: Date
     ) -> [RollingWindow: [GeminiObservedToolEvent]] {
-        let sortedWindows = windows.sorted { $0.rawValue < $1.rawValue }
+        let sortedWindows = windows.sorted { $0.lookbackDays < $1.lookbackDays }
         let cutoffs = Dictionary(uniqueKeysWithValues: sortedWindows.map { window in
-            (window, Calendar.current.date(byAdding: .day, value: -window.rawValue, to: now) ?? now)
+            (window, window.cutoffDate(relativeTo: now))
         })
 
         var buckets: [RollingWindow: [GeminiObservedToolEvent]] = Dictionary(uniqueKeysWithValues: windows.map { ($0, []) })
@@ -131,10 +150,10 @@ public actor GeminiUsageRepository: WindowedCapabilityRepository, WarningReporti
         return buckets
     }
 
-    private func singleEventUsage(id: CapabilityID, timestamp: Date, status: GeminiToolStatus?) -> CapabilityUsage {
+    private func singleEventUsage(id: CapabilityID, timestamp: Date, status: GeminiToolStatus?, reference: UsageRecordReference?) -> CapabilityUsage {
         let successCount = status == .success ? 1 : 0
         let failureCount = status == .error ? 1 : 0
-        return CapabilityUsage(id: id, usageCount: 1, firstUsedAt: timestamp, lastUsedAt: timestamp, successCount: successCount, failureCount: failureCount, installedButUnused: false)
+        return CapabilityUsage(id: id, usageCount: 1, firstUsedAt: timestamp, lastUsedAt: timestamp, successCount: successCount, failureCount: failureCount, installedButUnused: false, evidenceSamples: reference.map { [$0] })
     }
 
     private func parseMcpToolName(
@@ -164,7 +183,8 @@ public actor GeminiUsageRepository: WindowedCapabilityRepository, WarningReporti
             successCount: lhs.successCount + rhs.successCount,
             failureCount: lhs.failureCount + rhs.failureCount,
             avgLatencyMs: nil,
-            installedButUnused: (lhs.usageCount + rhs.usageCount) == 0 && (lhs.installedButUnused || rhs.installedButUnused)
+            installedButUnused: false,
+            evidenceSamples: Array(((lhs.evidenceSamples ?? []) + (rhs.evidenceSamples ?? [])).prefix(5))
         )
     }
 

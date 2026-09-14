@@ -39,8 +39,8 @@ fi
 mkdir -p "$(dirname "$APPCAST_OUTPUT")"
 "$generate_appcast" \
   --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" \
-  --download-url-prefix "$DOWNLOAD_BASE_URL" \
-  --output-path "$APPCAST_OUTPUT" \
-  "$ARTIFACT_PATH"
+  --download-url-prefix "${DOWNLOAD_BASE_URL%/}/" \
+  -o "$APPCAST_OUTPUT" \
+  "$(dirname "$ARTIFACT_PATH")"
 
 echo "Generated appcast at $APPCAST_OUTPUT"

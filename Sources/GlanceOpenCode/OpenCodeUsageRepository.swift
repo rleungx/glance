@@ -1,7 +1,7 @@
 import Foundation
 import GlanceCore
 
-public actor OpenCodeUsageRepository: WindowedCapabilityRepository {
+public actor OpenCodeUsageRepository: EvidenceReportingRepository {
     private let configLoader: OpenCodeConfigLoader
     private let usageReader: OpenCodeUsageReader
     private let mcpServerNameProvider: any OpenCodeMCPServerNameProviding
@@ -20,12 +20,12 @@ public actor OpenCodeUsageRepository: WindowedCapabilityRepository {
         try await loadCapabilities(windows: [.day30], now: .now)[.day30] ?? []
     }
 
-    public func loadCapabilities(windows: [RollingWindow], now: Date) async throws -> [RollingWindow: [CapabilityUsage]] {
+    public func loadUsage(windows: [RollingWindow], now: Date) async throws -> UsageLoadResult {
         let installedSkills = try configLoader.loadInstalledSkills()
         let installedSkillNameMap = Dictionary(
-            uniqueKeysWithValues: installedSkills.map {
+            installedSkills.map {
                 ($0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), $0.name)
-            }
+            }, uniquingKeysWith: { first, _ in first }
         )
         let configuredServers = try configLoader.loadConfiguredMCPServers().filter(\.enabled)
         let fallbackServerNames = Set(configuredServers.map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
@@ -36,10 +36,10 @@ public actor OpenCodeUsageRepository: WindowedCapabilityRepository {
             effectiveServerNames = try await mcpServerNameProvider.loadServerNames()
         }
 
+        let observations = try usageReader.loadObservedCapabilities(mcpServerNames: effectiveServerNames, windows: windows, now: now)
         var output: [RollingWindow: [CapabilityUsage]] = [:]
         for window in windows {
-            let cutoffDate = Calendar.current.date(byAdding: .day, value: -window.rawValue, to: now) ?? now
-            let observedUsages = try usageReader.loadObservedCapabilities(mcpServerNames: effectiveServerNames, since: cutoffDate)
+            let observedUsages = observations[window] ?? []
             output[window] = buildCapabilities(
                 installedSkills: installedSkills,
                 installedSkillNameMap: installedSkillNameMap,
@@ -48,7 +48,9 @@ public actor OpenCodeUsageRepository: WindowedCapabilityRepository {
             )
         }
 
-        return output
+        var evidence = UsageEvidence(sources: configLoader.evidenceSources, filesRead: usageReader.databaseExists ? 1 : 0)
+        evidence.finish(timestamps: output.values.flatMap { usages in usages.flatMap { [$0.firstUsedAt, $0.lastUsedAt].compactMap { $0 } } })
+        return UsageLoadResult(windows: output, evidence: evidence)
     }
 
     private func buildCapabilities(
@@ -62,12 +64,12 @@ public actor OpenCodeUsageRepository: WindowedCapabilityRepository {
 
         for skill in installedSkills {
             let id = CapabilityID(kind: .skill, name: skill.name)
-            capabilities[id] = CapabilityUsage(id: id, usageCount: 0, installedButUnused: true)
+            capabilities[id] = CapabilityUsage(id: id, usageCount: 0, installedButUnused: false)
         }
 
         for serverName in effectiveServerNames.sorted() {
             let id = CapabilityID(kind: .mcpServer, namespace: serverName, name: serverName)
-            capabilities[id] = CapabilityUsage(id: id, usageCount: 0, installedButUnused: true)
+            capabilities[id] = CapabilityUsage(id: id, usageCount: 0, installedButUnused: false)
         }
 
         var serverAccumulators: [CapabilityID: CapabilityUsage] = [:]
@@ -88,7 +90,8 @@ public actor OpenCodeUsageRepository: WindowedCapabilityRepository {
                     successCount: usage.successCount,
                     failureCount: usage.failureCount,
                     avgLatencyMs: usage.avgLatencyMs,
-                    installedButUnused: usage.installedButUnused
+                    installedButUnused: usage.installedButUnused,
+                    evidenceSamples: usage.evidenceSamples
                 )
             }
 
@@ -115,7 +118,8 @@ public actor OpenCodeUsageRepository: WindowedCapabilityRepository {
                     successCount: usage.successCount,
                     failureCount: usage.failureCount,
                     avgLatencyMs: usage.avgLatencyMs,
-                    installedButUnused: false
+                    installedButUnused: false,
+                    evidenceSamples: usage.evidenceSamples
                 )
                 if let existing = serverAccumulators[serverID] {
                     serverAccumulators[serverID] = merge(existing, with: serverUsage)
@@ -150,7 +154,8 @@ public actor OpenCodeUsageRepository: WindowedCapabilityRepository {
             successCount: lhs.successCount + rhs.successCount,
             failureCount: lhs.failureCount + rhs.failureCount,
             avgLatencyMs: weightedLatency,
-            installedButUnused: totalCount == 0 && (lhs.installedButUnused || rhs.installedButUnused)
+            installedButUnused: false,
+            evidenceSamples: Array(((lhs.evidenceSamples ?? []) + (rhs.evidenceSamples ?? [])).prefix(5))
         )
     }
 

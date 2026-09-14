@@ -1,4 +1,5 @@
 import Foundation
+import GlanceCore
 
 public struct GeminiInstalledSkill: Hashable, Sendable {
     public let name: String
@@ -43,22 +44,30 @@ public struct GeminiObservedToolEvent: Sendable {
     public let toolName: String
     public let args: [String: GeminiJSONValue]
     public let status: GeminiToolStatus?
+    public let reference: UsageRecordReference?
+    public let eventID: String?
+    public let inferredIdentity: Bool
 
-    public init(timestamp: Date, toolName: String, args: [String: GeminiJSONValue], status: GeminiToolStatus?) {
+    public init(timestamp: Date, toolName: String, args: [String: GeminiJSONValue], status: GeminiToolStatus?, reference: UsageRecordReference? = nil, eventID: String? = nil, inferredIdentity: Bool = false) {
         self.timestamp = timestamp
         self.toolName = toolName
         self.args = args
         self.status = status
+        self.reference = reference
+        self.eventID = eventID
+        self.inferredIdentity = inferredIdentity
     }
 }
 
 public struct GeminiTranscriptLoadResult: Sendable {
     public let events: [GeminiObservedToolEvent]
     public let skippedFilesCount: Int
+    public let evidence: UsageEvidence
 
-    public init(events: [GeminiObservedToolEvent], skippedFilesCount: Int) {
+    public init(events: [GeminiObservedToolEvent], skippedFilesCount: Int, evidence: UsageEvidence = UsageEvidence()) {
         self.events = events
         self.skippedFilesCount = skippedFilesCount
+        self.evidence = evidence
     }
 }
 

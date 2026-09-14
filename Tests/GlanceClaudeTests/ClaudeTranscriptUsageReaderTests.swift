@@ -8,7 +8,7 @@ func claudeTranscriptReaderLoadsRecentToolUseEvents() throws {
     try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: tempRoot) }
 
-    let transcriptsDir = tempRoot.appending(path: ".claude/transcripts", directoryHint: .isDirectory)
+    let transcriptsDir = tempRoot.appending(path: ".claude/projects/demo", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: transcriptsDir, withIntermediateDirectories: true)
     let transcript = transcriptsDir.appending(path: "session.jsonl")
     try """
@@ -30,7 +30,7 @@ func claudeTranscriptReaderParsesTimestampsWithoutFractionalSeconds() throws {
     try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: tempRoot) }
 
-    let transcriptsDir = tempRoot.appending(path: ".claude/transcripts", directoryHint: .isDirectory)
+    let transcriptsDir = tempRoot.appending(path: ".claude/projects/demo", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: transcriptsDir, withIntermediateDirectories: true)
     let transcript = transcriptsDir.appending(path: "session.jsonl")
     try """
@@ -49,7 +49,7 @@ func claudeTranscriptReaderReloadsWhenTranscriptChanges() throws {
     try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: tempRoot) }
 
-    let transcriptsDir = tempRoot.appending(path: ".claude/transcripts", directoryHint: .isDirectory)
+    let transcriptsDir = tempRoot.appending(path: ".claude/projects/demo", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: transcriptsDir, withIntermediateDirectories: true)
     let transcript = transcriptsDir.appending(path: "session.jsonl")
     try "{\"type\":\"tool_use\",\"timestamp\":\"2026-04-01T12:00:00.000Z\",\"tool_name\":\"mem0-mcp_get_memories\"}\n".write(to: transcript, atomically: true, encoding: .utf8)
@@ -72,7 +72,7 @@ func claudeTranscriptReaderReportsSkippedMalformedFiles() throws {
     try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: tempRoot) }
 
-    let transcriptsDir = tempRoot.appending(path: ".claude/transcripts", directoryHint: .isDirectory)
+    let transcriptsDir = tempRoot.appending(path: ".claude/projects/demo", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: transcriptsDir, withIntermediateDirectories: true)
     try "{bad json".write(to: transcriptsDir.appending(path: "bad.jsonl"), atomically: true, encoding: .utf8)
     try "{\"type\":\"tool_use\",\"timestamp\":\"2026-04-01T12:00:00.000Z\",\"tool_name\":\"mem0-mcp_get_memories\"}\n".write(to: transcriptsDir.appending(path: "good.jsonl"), atomically: true, encoding: .utf8)
@@ -90,7 +90,7 @@ func claudeTranscriptReaderCountsMixedValidAndMalformedLinesAsSkipped() throws {
     try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: tempRoot) }
 
-    let transcriptsDir = tempRoot.appending(path: ".claude/transcripts", directoryHint: .isDirectory)
+    let transcriptsDir = tempRoot.appending(path: ".claude/projects/demo", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: transcriptsDir, withIntermediateDirectories: true)
     try """
     {"type":"tool_use","timestamp":"2026-04-01T12:00:00.000Z","tool_name":"mem0-mcp_get_memories"}

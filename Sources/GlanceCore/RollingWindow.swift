@@ -1,6 +1,8 @@
 import Foundation
 
 public enum RollingWindow: Int, CaseIterable, Codable, Hashable, Sendable, Identifiable {
+    /// All available history, used for cleanup decisions rather than top lists.
+    case allTime = 0
     case day1 = 1
     case day7 = 7
     case day14 = 14
@@ -13,7 +15,14 @@ public enum RollingWindow: Int, CaseIterable, Codable, Hashable, Sendable, Ident
     public var id: Int { rawValue }
 
     public var title: String {
-        "\(rawValue)d"
+        self == .allTime ? "All time" : "\(rawValue)d"
+    }
+
+    public var lookbackDays: Int { self == .allTime ? .max : rawValue }
+
+    public func cutoffDate(relativeTo now: Date) -> Date {
+        guard self != .allTime else { return .distantPast }
+        return now.addingTimeInterval(-Double(rawValue) * 86_400)
     }
 
     public static var displayCases: [RollingWindow] {

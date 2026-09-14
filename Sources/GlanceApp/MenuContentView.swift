@@ -423,7 +423,7 @@ struct MenuContentView: View {
 
             Spacer(minLength: 8)
 
-            Text("\(usage.usageCount)x")
+            Text("\(usage.usageCount) observed")
                 .font(.caption.weight(.semibold).monospacedDigit())
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, Metrics.pillHorizontalPadding)
@@ -435,6 +435,7 @@ struct MenuContentView: View {
         }
         .padding(.horizontal, Metrics.cardPadding)
         .padding(.vertical, Metrics.rowVerticalPadding)
+        .help((usage.evidenceSamples ?? []).map { "\(($0.file as NSString).abbreviatingWithTildeInPath): \($0.record)" }.joined(separator: "\n"))
     }
 
     private func statusPill(title: String, systemImage: String) -> some View {
@@ -484,17 +485,20 @@ struct MenuContentView: View {
     }
 
     private func detailText(for usage: CapabilityUsage) -> String {
+        if usage.usageCount == 0, !usage.installedButUnused {
+            return "Usage not observed"
+        }
         if usage.installedButUnused {
             return usage.id.kind == .mcpServer ? "Configured but unused" : "Installed but unused"
         }
 
         let lastUsed = usage.lastUsedAt ?? usage.firstUsedAt
-        let lastUsedText = lastUsed.map { $0.formatted(date: .abbreviated, time: .omitted) } ?? "never"
+        let lastUsedText = lastUsed.map { $0.formatted(date: .abbreviated, time: .omitted) } ?? "time unknown"
         if usage.hasOutcomeData {
             let successRate = Int((usage.successRate * 100).rounded())
-            return "Last used \(lastUsedText) · \(successRate)% success"
+            return "Observed \(lastUsedText) · \(successRate)% of \(usage.successCount + usage.failureCount) known outcomes"
         }
-        return "Last used \(lastUsedText) · outcome unknown"
+        return "Observed \(lastUsedText) · outcome unknown"
     }
 
     private var sectionSurface: some View {
@@ -558,7 +562,7 @@ private enum SourceLogoCache {
             return cachedImage
         }
 
-        for bundle in [Bundle.module, Bundle.main] {
+        for bundle in [GlanceResources.bundle, Bundle.main] {
             for fileExtension in SourceLogoResource.supportedExtensions {
                 if let url = bundle.url(
                     forResource: assetName,

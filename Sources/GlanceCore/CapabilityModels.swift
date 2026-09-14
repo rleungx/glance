@@ -46,6 +46,7 @@ public struct CapabilityUsage: Identifiable, Codable, Hashable, Sendable {
     public let failureCount: Int
     public let avgLatencyMs: Double?
     public let installedButUnused: Bool
+    public let evidenceSamples: [UsageRecordReference]?
 
     public init(
         id: CapabilityID,
@@ -55,7 +56,8 @@ public struct CapabilityUsage: Identifiable, Codable, Hashable, Sendable {
         successCount: Int = 0,
         failureCount: Int = 0,
         avgLatencyMs: Double? = nil,
-        installedButUnused: Bool = false
+        installedButUnused: Bool = false,
+        evidenceSamples: [UsageRecordReference]? = nil
     ) {
         self.id = id
         self.usageCount = usageCount
@@ -65,6 +67,7 @@ public struct CapabilityUsage: Identifiable, Codable, Hashable, Sendable {
         self.failureCount = failureCount
         self.avgLatencyMs = avgLatencyMs
         self.installedButUnused = installedButUnused
+        self.evidenceSamples = evidenceSamples
     }
 
     public var successRate: Double {
@@ -72,6 +75,8 @@ public struct CapabilityUsage: Identifiable, Codable, Hashable, Sendable {
         guard total > 0 else { return 1 }
         return Double(successCount) / Double(total)
     }
+
+    public var knownSuccessRate: Double? { hasOutcomeData ? successRate : nil }
 
     public var hasOutcomeData: Bool {
         (successCount + failureCount) > 0
@@ -111,6 +116,9 @@ public struct RankingPolicy: Codable, Hashable, Sendable {
 
 public struct RankingSnapshot: Sendable {
     public let generatedAt: Date
+    public let evidence: UsageEvidence
+    public let sourceID: String?
+    public let window: RollingWindow?
     public let allCapabilities: [CapabilityUsage]
     public let skills: [CapabilityUsage]
     public let mcpTools: [CapabilityUsage]
@@ -125,9 +133,15 @@ public struct RankingSnapshot: Sendable {
         mcpTools: [CapabilityUsage],
         mcpServers: [CapabilityUsage],
         stale: [CapabilityUsage],
-        removalCandidates: [CapabilityUsage]
+        removalCandidates: [CapabilityUsage],
+        evidence: UsageEvidence = UsageEvidence(),
+        sourceID: String? = nil,
+        window: RollingWindow? = nil
     ) {
         self.generatedAt = generatedAt
+        self.evidence = evidence
+        self.sourceID = sourceID
+        self.window = window
         self.allCapabilities = allCapabilities
         self.skills = skills
         self.mcpTools = mcpTools

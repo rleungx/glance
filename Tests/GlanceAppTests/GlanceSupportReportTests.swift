@@ -4,6 +4,17 @@ import GlanceCore
 @testable import GlanceApp
 
 @Test
+func supportReportQualityOmitsTranscriptPathsAndContent() throws {
+    let quality = GlanceSupportReport.DataQuality(UsageEvidence(completeness: .partial,
+        sources: ["/private-transcript/session.jsonl"], filesRead: 2, skippedRecords: 3, duplicates: 1))
+    let data = try JSONEncoder().encode(quality)
+    let json = String(decoding: data, as: UTF8.self)
+    #expect(!json.contains("private-transcript"))
+    #expect(quality.skippedRecords == 3)
+    #expect(try JSONDecoder().decode(GlanceSupportReport.DataQuality.self, from: data) == quality)
+}
+
+@Test
 func supportReportRoundTripsThroughJSON() throws {
     let report = makeSupportReport()
     let data = try report.jsonData()

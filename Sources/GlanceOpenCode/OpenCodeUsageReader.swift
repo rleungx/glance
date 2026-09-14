@@ -14,6 +14,24 @@ public final class OpenCodeUsageReader {
         try loadObservedCapabilities(mcpServerNames: mcpServerNames, since: nil)
     }
 
+    public var databaseExists: Bool { fileManager.fileExists(atPath: paths.databaseURL.path) }
+
+    public func loadObservedCapabilities(mcpServerNames: Set<String>, windows: [RollingWindow], now: Date) throws -> [RollingWindow: [ObservedCapabilityUsage]] {
+        guard databaseExists else { return Dictionary(uniqueKeysWithValues: Set(windows).map { ($0, []) }) }
+        let connection = try SQLiteConnection(url: paths.databaseURL, mode: .readOnly)
+        try connection.execute("BEGIN")
+        defer { try? connection.execute("ROLLBACK") }
+        try validateSchema(using: connection)
+        let hasID = try connection.columnNames(for: "part").contains("id")
+        var result: [RollingWindow: [ObservedCapabilityUsage]] = [:]
+        for window in Set(windows) {
+            let cutoff = window == .allTime ? nil : window.cutoffDate(relativeTo: now)
+            let rows = try connection.query(Self.usageQuery(mcpServerNames: mcpServerNames, cutoffDate: cutoff, through: now, hasID: hasID))
+            result[window] = rows.compactMap { Self.parseObservedUsage(from: $0, mcpServerNames: mcpServerNames, file: paths.databaseURL.path) }
+        }
+        return result
+    }
+
     public func loadObservedCapabilities(mcpServerNames: Set<String>, since cutoffDate: Date?) throws -> [ObservedCapabilityUsage] {
         guard fileManager.fileExists(atPath: paths.databaseURL.path) else {
             return []
@@ -21,13 +39,15 @@ public final class OpenCodeUsageReader {
 
         let connection = try SQLiteConnection(url: paths.databaseURL, mode: .readOnly)
         try validateSchema(using: connection)
-        let rows = try connection.query(Self.usageQuery(mcpServerNames: mcpServerNames, cutoffDate: cutoffDate))
-        return rows.compactMap { Self.parseObservedUsage(from: $0, mcpServerNames: mcpServerNames) }
+        let hasID = try connection.columnNames(for: "part").contains("id")
+        let rows = try connection.query(Self.usageQuery(mcpServerNames: mcpServerNames, cutoffDate: cutoffDate, hasID: hasID))
+        return rows.compactMap { Self.parseObservedUsage(from: $0, mcpServerNames: mcpServerNames, file: paths.databaseURL.path) }
     }
 
     private static func parseObservedUsage(
         from row: [String: SQLiteValue],
-        mcpServerNames: Set<String>
+        mcpServerNames: Set<String>,
+        file: String
     ) -> ObservedCapabilityUsage? {
         let rawTool = row["raw_tool"]?.stringValue ?? ""
         let usageCount = row["usage_count"]?.intValue ?? 0
@@ -36,6 +56,7 @@ public final class OpenCodeUsageReader {
         let successCount = row["success_count"]?.intValue ?? 0
         let failureCount = row["failure_count"]?.intValue ?? 0
         let avgLatencyMs = row["avg_latency_ms"]?.doubleValue
+        let samples = row["sample_record"]?.stringValue.map { [UsageRecordReference(file: file, record: "part.id=\($0)")] }
 
         if rawTool == "skill" {
             guard let skillName = row["skill_name"]?.stringValue, !skillName.isEmpty else {
@@ -49,7 +70,8 @@ public final class OpenCodeUsageReader {
                 successCount: successCount,
                 failureCount: failureCount,
                 avgLatencyMs: avgLatencyMs,
-                installedButUnused: false
+                installedButUnused: false,
+                evidenceSamples: samples
             )
             return ObservedCapabilityUsage(usage: usage)
         }
@@ -71,7 +93,8 @@ public final class OpenCodeUsageReader {
             successCount: successCount,
             failureCount: failureCount,
             avgLatencyMs: avgLatencyMs,
-            installedButUnused: false
+            installedButUnused: false,
+            evidenceSamples: samples
         )
         return ObservedCapabilityUsage(usage: usage, serverName: normalizedMCP.serverName)
     }
@@ -136,7 +159,7 @@ public final class OpenCodeUsageReader {
         return trimmed.lowercased()
     }
 
-    private static func usageQuery(mcpServerNames: Set<String>, cutoffDate: Date?) -> String {
+    private static func usageQuery(mcpServerNames: Set<String>, cutoffDate: Date?, through: Date? = nil, hasID: Bool = false) -> String {
         let serverConditions = mcpServerNames.sorted().flatMap { serverName -> [String] in
             let escapedServerName = escapeSQLString(serverName)
             return [
@@ -147,9 +170,11 @@ public final class OpenCodeUsageReader {
         let conditionalBlock = serverConditions.isEmpty ? "" : "\n        OR " + serverConditions.joined(separator: "\n        OR ")
         let cutoffMilliseconds = cutoffDate.map { Int64(($0.timeIntervalSince1970 * 1_000).rounded(.down)) }
         let cutoffClause = cutoffMilliseconds.map { "\n      AND time_created >= \($0)" } ?? ""
+        let endClause = through.map { "AND time_created <= \(Int64(($0.timeIntervalSince1970 * 1_000).rounded(.down)))" } ?? ""
 
         return """
     SELECT
+      \(hasID ? "MIN(id)" : "NULL") AS sample_record,
       json_extract(data, '$.tool') AS raw_tool,
       json_extract(data, '$.state.input.name') AS skill_name,
       json_extract(data, '$.state.input.mcp_name') AS mcp_name,
@@ -170,6 +195,7 @@ public final class OpenCodeUsageReader {
     FROM part
     WHERE json_extract(data, '$.type') = 'tool'
       \(cutoffClause)
+      \(endClause)
       AND (
         json_extract(data, '$.tool') = 'skill'
         OR json_extract(data, '$.tool') = 'skill_mcp'

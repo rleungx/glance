@@ -13,7 +13,8 @@ MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 FRAMEWORKS_DIR="$CONTENTS_DIR/Frameworks"
 INFO_TEMPLATE="$ROOT_DIR/Packaging/macOS/Info.plist"
-swift build -c "$BUILD_CONFIGURATION"
+cd "$ROOT_DIR"
+swift build -c "$BUILD_CONFIGURATION" -Xlinker -rpath -Xlinker '@executable_path/../Frameworks'
 BIN_PATH="$(swift build -c "$BUILD_CONFIGURATION" --show-bin-path)"
 EXECUTABLE_PATH="$BIN_PATH/GlanceApp"
 BUILD_PRODUCTS_DIR="$BIN_PATH"
@@ -44,9 +45,8 @@ fi
 cp "$EXECUTABLE_PATH" "$MACOS_DIR/$APP_NAME"
 chmod +x "$MACOS_DIR/$APP_NAME"
 
-if [[ -d "$RESOURCE_BUNDLE_PATH" ]]; then
-  ditto "$RESOURCE_BUNDLE_PATH" "$RESOURCES_DIR/$(basename "$RESOURCE_BUNDLE_PATH")"
-fi
+[[ -d "$RESOURCE_BUNDLE_PATH" ]] || die "resource bundle not found at $RESOURCE_BUNDLE_PATH"
+ditto "$RESOURCE_BUNDLE_PATH" "$RESOURCES_DIR/$(basename "$RESOURCE_BUNDLE_PATH")"
 
 if [[ ! -d "$SPARKLE_FRAMEWORK_PATH" ]]; then
   echo "error: Sparkle.framework not found at $SPARKLE_FRAMEWORK_PATH" >&2

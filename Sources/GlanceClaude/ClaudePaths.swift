@@ -16,7 +16,7 @@ public struct ClaudePaths: Sendable {
     }
 
     public var transcriptsDirectory: URL {
-        claudeDirectory.appending(path: "transcripts", directoryHint: .isDirectory)
+        claudeDirectory.appending(path: "projects", directoryHint: .isDirectory)
     }
 
     public var globalConfigCandidates: [URL] {

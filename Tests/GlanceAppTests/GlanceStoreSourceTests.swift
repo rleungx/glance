@@ -70,7 +70,7 @@ func glanceStoreDropsStaleRefreshResultsAfterSourceSwitch() async {
 
 @Test
 @MainActor
-func glanceStorePreservesRenderedStateWhileSwitchingBetweenReadySources() async throws {
+func glanceStoreClearsRenderedStateWhileSwitchingBetweenReadySources() async throws {
     let sourceA = GlanceSource(id: "opencode-local", displayName: "OpenCode", detail: "Current source")
     let sourceB = GlanceSource(id: "claude-source", displayName: "Claude", detail: "Claude source")
     let selectionStore = InMemorySelectionStore(selectedSourceID: sourceA.id)
@@ -83,7 +83,7 @@ func glanceStorePreservesRenderedStateWhileSwitchingBetweenReadySources() async 
 
     await store.refresh()
 
-    let previousRefreshAt = try #require(store.lastRefreshAt)
+    #expect(store.lastRefreshAt != nil)
     #expect(store.snapshot.skills.map(\.id.name) == ["old-source-skill"])
     #expect(store.noticeMessage == "Old warning")
 
@@ -95,9 +95,9 @@ func glanceStorePreservesRenderedStateWhileSwitchingBetweenReadySources() async 
     await registry.claudeRepository.waitUntilStarted()
 
     #expect(store.currentSource == sourceB)
-    #expect(store.snapshot.skills.map(\.id.name) == ["old-source-skill"])
-    #expect(store.noticeMessage == "Old warning")
-    #expect(store.lastRefreshAt == previousRefreshAt)
+    #expect(store.snapshot.allCapabilities.isEmpty)
+    #expect(store.noticeMessage == nil)
+    #expect(store.lastRefreshAt == nil)
 
     await registry.claudeRepository.release()
     await completionTask.value
@@ -165,11 +165,11 @@ func glanceStoreRunsFollowUpRefreshWhenPolicyChangesDuringInFlightWindowedRefres
     let requestedWindows = await repository.requestedWindowsByLoad
     #expect(requestedWindows.count == 2)
     #expect(requestedWindows[0].contains(.day7))
-    #expect(requestedWindows[0].contains(.day45))
+    #expect(requestedWindows[0].contains(.allTime))
     #expect(requestedWindows[0].count == 2)
     #expect(requestedWindows[0].contains(.day90) == false)
     #expect(requestedWindows[1].contains(.day7))
-    #expect(requestedWindows[1].contains(.day90))
+    #expect(requestedWindows[1].contains(.allTime))
     #expect(requestedWindows[1].count == 2)
 }
 
@@ -209,7 +209,7 @@ func glanceStoreRunsFollowUpRefreshWhenPolicyChangesWithoutCleanupWindowChange()
     #expect(requestedWindows.count == 2)
     #expect(requestedWindows[0] == requestedWindows[1])
     #expect(requestedWindows[0].contains(.day7))
-    #expect(requestedWindows[0].contains(.day45))
+    #expect(requestedWindows[0].contains(.allTime))
     #expect(requestedWindows[0].count == 2)
 }
 
@@ -242,7 +242,7 @@ func glanceStoreRefreshesWhenSelectingMissingWindowedSnapshot() async {
     #expect(requestedWindows.count == 2)
     #expect(requestedWindows[0].contains(.day7))
     #expect(requestedWindows[1].contains(.day14))
-    #expect(requestedWindows[1].contains(.day45))
+    #expect(requestedWindows[1].contains(.allTime))
     #expect(requestedWindows[1].count == 2)
 }
 
@@ -275,9 +275,9 @@ func glanceStoreRunsFollowUpRefreshWhenSelectingMissingWindowDuringInFlightRefre
     let requestedWindows = await repository.requestedWindowsByLoad
     #expect(requestedWindows.count == 2)
     #expect(requestedWindows[0].contains(.day7))
-    #expect(requestedWindows[0].contains(.day45))
+    #expect(requestedWindows[0].contains(.allTime))
     #expect(requestedWindows[1].contains(.day14))
-    #expect(requestedWindows[1].contains(.day45))
+    #expect(requestedWindows[1].contains(.allTime))
 }
 
 @Test
@@ -372,6 +372,161 @@ func glanceStoreUsesSourceSpecificUserFacingErrorMessage() async {
     await store.refresh()
 
     #expect(store.errorMessage == "Glance could not read the OpenCode database. Make sure OpenCode data is available and try again.")
+}
+
+@Test
+@MainActor
+func glanceStoreRejectsOldGenerationAfterSwitchingBackToSameSource() async {
+    let oldRepository = BlockingCapabilityRepository(capabilities: [CapabilityUsage(id: CapabilityID(kind: .skill, name: "old"), usageCount: 1)])
+    let newRepository = BlockingCapabilityRepository(capabilities: [CapabilityUsage(id: CapabilityID(kind: .skill, name: "new"), usageCount: 2)])
+    let registry = GenerationSourceRegistry(first: oldRepository, second: newRepository)
+    let store = GlanceStore(sourceRegistry: registry, selectionStore: InMemorySelectionStore(selectedSourceID: registry.sourceA.id), startRefreshLoop: false)
+    let oldTask = Task { await store.refresh() }
+    await oldRepository.waitUntilStarted()
+    store.selectSource(registry.sourceB)
+    store.selectSource(registry.sourceA)
+    let newTask = Task { await store.refresh() }
+    await newRepository.waitUntilStarted()
+    await oldRepository.release()
+    await oldTask.value
+
+    #expect(store.isRefreshing)
+    #expect(store.snapshot.allCapabilities.isEmpty)
+    #expect(store.lastRefreshAt == nil)
+
+    await newRepository.release()
+    await newTask.value
+    #expect(store.snapshot.skills.map(\.id.name) == ["new"])
+    #expect(!store.isRefreshing)
+}
+
+@Test
+@MainActor
+func glanceStoreDoesNotShowPreviousSourceWhenNewSourceFails() async {
+    let registry = GenerationSourceRegistry(
+        first: WarningCapabilityRepository(capabilities: [CapabilityUsage(id: CapabilityID(kind: .skill, name: "old"), usageCount: 1)], warnings: ["old warning"]),
+        second: StubCapabilityRepository(capabilities: [])
+    )
+    let store = GlanceStore(sourceRegistry: registry, selectionStore: InMemorySelectionStore(selectedSourceID: registry.sourceA.id), startRefreshLoop: false)
+    await store.refresh()
+    #expect(!store.snapshot.allCapabilities.isEmpty)
+    store.selectSource(registry.sourceB)
+    await store.refresh()
+    #expect(store.errorMessage != nil)
+    #expect(store.snapshot.allCapabilities.isEmpty)
+    #expect(store.windowedSnapshots.isEmpty)
+    #expect(store.lastRefreshAt == nil)
+    #expect(store.noticeMessage == nil)
+}
+
+@Test
+@MainActor
+func glanceStoreRejectsWarningsThatCompleteAfterSourceSwitch() async {
+    let warningGate = BlockingCapabilityRepository(capabilities: [])
+    let registry = GenerationSourceRegistry(
+        first: DelayedWarningsRepository(gate: warningGate),
+        second: StubCapabilityRepository(capabilities: [CapabilityUsage(id: CapabilityID(kind: .skill, name: "new"), usageCount: 1)])
+    )
+    let store = GlanceStore(sourceRegistry: registry, selectionStore: InMemorySelectionStore(selectedSourceID: registry.sourceA.id), startRefreshLoop: false)
+    let oldTask = Task { await store.refresh() }
+    await warningGate.waitUntilStarted()
+    store.selectSource(registry.sourceB)
+    store.selectSource(registry.sourceA)
+    await store.refresh()
+    await warningGate.release()
+    await oldTask.value
+    #expect(store.snapshot.skills.map(\.id.name) == ["new"])
+    #expect(store.noticeMessage == nil)
+    #expect(!store.isRefreshing)
+}
+
+private struct DelayedWarningsRepository: WarningReportingRepository {
+    let gate: BlockingCapabilityRepository
+    func loadCapabilities() async throws -> [CapabilityUsage] {
+        [CapabilityUsage(id: CapabilityID(kind: .skill, name: "old"), usageCount: 1)]
+    }
+    func currentWarnings() async -> [String] {
+        _ = try? await gate.loadCapabilities()
+        return ["old warning"]
+    }
+}
+
+private final class GenerationSourceRegistry: GlanceSourceResolving {
+    let sourceA = GlanceSource(id: "a", displayName: "A", detail: "Test A")
+    let sourceB = GlanceSource(id: "b", displayName: "B", detail: "Test B")
+    let first: any CapabilityRepository
+    let second: any CapabilityRepository
+    private var aRequests = 0
+
+    init(first: any CapabilityRepository, second: any CapabilityRepository) {
+        self.first = first
+        self.second = second
+    }
+
+    var availableSources: [GlanceSource] { [sourceA, sourceB] }
+    func makeRepository(for source: GlanceSource) -> any CapabilityRepository {
+        guard source == sourceA else { return ErroringCapabilityRepository(error: OpenCodeDataError.sqlite("test failure")) }
+        aRequests += 1
+        return aRequests == 1 ? first : second
+    }
+    func settingsPaths(for source: GlanceSource) -> [String] { [] }
+    func diagnostics(for source: GlanceSource) -> GlanceSourceDiagnostics {
+        GlanceSourceDiagnostics(readiness: .ready, supportsRollingWindows: false, artifacts: [], summary: "Ready")
+    }
+    func userFacingErrorMessage(for source: GlanceSource, error: Error) -> String { error.localizedDescription }
+}
+
+@Test
+@MainActor
+func glanceStoreDoesNotRelabelOldWindowAfterLoadFailure() async {
+    let repository = FailingWindowRepository()
+    let registry = SingleWindowedRepositorySourceRegistry(repository: repository)
+    let store = GlanceStore(sourceRegistry: registry,
+        selectionStore: InMemorySelectionStore(selectedSourceID: GlanceSources.default.id),
+        windowSelectionStore: InMemoryWindowSelectionStore(rawValue: 7), startRefreshLoop: false)
+    await store.refresh()
+    #expect(store.activeSnapshot.skills.first?.usageCount == 7)
+    #expect(store.activeSnapshot.window == .day7)
+    #expect(store.activeSnapshot.sourceID == store.currentSource.id)
+    store.setSelectedWindow(.day14)
+    #expect(store.activeSnapshot.allCapabilities.isEmpty)
+    await store.refresh()
+    #expect(store.errorMessage != nil)
+    #expect(store.effectiveWindowLabel == "14d")
+    #expect(store.activeSnapshot.allCapabilities.isEmpty)
+    #expect(store.visibleRemovalCandidates.isEmpty)
+}
+
+@Test
+@MainActor
+func glanceStorePublishesEvidenceAtomicallyAndBlocksPartialCleanup() async {
+    let registry = SingleWindowedRepositorySourceRegistry(repository: PartialEvidenceRepository())
+    let store = GlanceStore(sourceRegistry: registry,
+        selectionStore: InMemorySelectionStore(selectedSourceID: GlanceSources.default.id), startRefreshLoop: false)
+    await store.refresh()
+    #expect(store.activeSnapshot.allCapabilities.count == 1)
+    #expect(store.usageEvidence.skippedRecords == 3)
+    #expect(store.activeSnapshot.evidence == store.usageEvidence)
+    #expect(store.visibleRemovalCandidates.isEmpty)
+    #expect(store.visibleStale.isEmpty)
+    #expect(store.noticeMessage?.contains("3 unparsed records") == true)
+}
+
+private struct PartialEvidenceRepository: EvidenceReportingRepository {
+    func loadCapabilities() async throws -> [CapabilityUsage] { [] }
+    func loadUsage(windows: [RollingWindow], now: Date) async throws -> UsageLoadResult {
+        let usage = CapabilityUsage(id: CapabilityID(kind: .skill, name: "demo"), usageCount: 0, installedButUnused: true)
+        return UsageLoadResult(windows: Dictionary(uniqueKeysWithValues: windows.map { ($0, [usage]) }),
+            evidence: UsageEvidence(completeness: .partial, skippedRecords: 3))
+    }
+}
+
+private struct FailingWindowRepository: WindowedCapabilityRepository {
+    func loadCapabilities() async throws -> [CapabilityUsage] { [] }
+    func loadCapabilities(windows: [RollingWindow], now: Date) async throws -> [RollingWindow: [CapabilityUsage]] {
+        if windows.contains(.day14) { throw OpenCodeDataError.sqlite("test failure") }
+        return Dictionary(uniqueKeysWithValues: windows.map { ($0, [CapabilityUsage(id: CapabilityID(kind: .skill, name: "demo"), usageCount: 7)]) })
+    }
 }
 
 private final class InMemorySelectionStore: SourceSelectionStoring {

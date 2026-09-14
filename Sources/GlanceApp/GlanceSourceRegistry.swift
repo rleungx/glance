@@ -92,7 +92,9 @@ struct LiveGlanceSourceRegistry: GlanceSourceResolving {
                 artifact(label: "Sessions", kind: .directory, path: paths.sessionsDirectory.path),
                 artifact(label: "Skills", kind: .directory, path: paths.skillsDirectory.path),
             ]
-            let ready = artifacts.contains(where: { $0.label == "Sessions" && $0.isPresent }) || artifacts.contains(where: { $0.label == "Skills" && $0.isPresent })
+                + paths.sessionDirectories.dropFirst().map { artifact(label: "Archived sessions", kind: .directory, path: $0.path) }
+                + paths.skillDirectories.filter { $0 != paths.skillsDirectory }.map { artifact(label: "Additional skills", kind: .directory, path: $0.path) }
+            let ready = artifacts.contains(where: { $0.label != "Config" && $0.isPresent })
             return GlanceSourceDiagnostics(
                 readiness: ready ? .ready : .needsSetup,
                 supportsRollingWindows: true,

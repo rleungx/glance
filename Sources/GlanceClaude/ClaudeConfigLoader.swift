@@ -56,6 +56,10 @@ public final class ClaudeConfigLoader {
         return results
     }
 
+    public var evidenceSources: [String] {
+        (paths.globalConfigCandidates + [paths.globalSkillsDirectory, paths.transcriptsDirectory]).map(\.path)
+    }
+
     private func extractMCPServers(from object: [String: Any]) -> [ClaudeConfiguredMCPServer] {
         guard let rawServers = object["mcpServers"] as? [String: Any] else {
             return []

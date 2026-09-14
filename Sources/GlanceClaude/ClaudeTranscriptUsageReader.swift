@@ -1,117 +1,113 @@
 import Foundation
+import GlanceCore
 
 public final class ClaudeTranscriptUsageReader {
     private let paths: ClaudePaths
     private let fileManager: FileManager
-    private let decoder = JSONDecoder()
-    private let fractionalFormatter: ISO8601DateFormatter
-    private let plainFormatter: ISO8601DateFormatter
+    private let fractionalFormatter = ISO8601DateFormatter()
+    private let plainFormatter = ISO8601DateFormatter()
     private var cache: [String: FileCacheEntry] = [:]
-    private var cachedCutoff: Date?
 
     public init(paths: ClaudePaths = .live, fileManager: FileManager = .default) {
         self.paths = paths
         self.fileManager = fileManager
-        let fractionalFormatter = ISO8601DateFormatter()
         fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        self.fractionalFormatter = fractionalFormatter
-
-        let plainFormatter = ISO8601DateFormatter()
-        plainFormatter.formatOptions = [.withInternetDateTime]
-        self.plainFormatter = plainFormatter
     }
 
     public func loadObservedEvents(since cutoffDate: Date) throws -> ClaudeTranscriptLoadResult {
-        guard fileManager.fileExists(atPath: paths.transcriptsDirectory.path) else {
-            return ClaudeTranscriptLoadResult(events: [], skippedFilesCount: 0)
-        }
-
-        if let cachedCutoff, cutoffDate < cachedCutoff {
-            cache = [:]
-        }
-        cachedCutoff = cutoffDate
-
-        let files = try fileManager.contentsOfDirectory(
-            at: paths.transcriptsDirectory,
-            includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
-            options: [.skipsHiddenFiles]
-        ).filter { $0.pathExtension == "jsonl" }
-
-        let currentPaths = Set(files.map(\.path))
+        let discovery = TranscriptFiles.discover(in: [paths.transcriptsDirectory], extensions: ["jsonl"], fileManager: fileManager)
+        var evidence = UsageEvidence(sources: [paths.transcriptsDirectory.path], skippedFiles: discovery.errors)
+        let currentPaths = Set(discovery.files.map(\.path))
         cache = cache.filter { currentPaths.contains($0.key) }
-
         var events: [ClaudeObservedToolEvent] = []
-        var skippedFilesCount = 0
-        for file in files {
-            let values = try file.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
-            let modifiedAt = values.contentModificationDate ?? .distantPast
-            let fileSize = values.fileSize ?? 0
-
-            if values.contentModificationDate != nil, modifiedAt < cutoffDate {
+        var malformedFiles = 0
+        for file in discovery.files {
+            do {
+                // Hash bytes as well as metadata: rewritten files can retain size and mtime.
+                let data = try Data(contentsOf: file)
+                let digest = UsageEventIdentity.fingerprint(data: data)
+                let entry: FileCacheEntry
+                if let cached = cache[file.path], cached.digest == digest {
+                    entry = cached
+                } else {
+                    guard let text = String(data: data, encoding: .utf8) else { throw ClaudeDataError.unexpectedTranscript(file) }
+                    entry = parse(text, file: file, digest: digest)
+                    cache[file.path] = entry
+                }
+                evidence.filesRead += 1
+                evidence.skippedRecords += entry.skippedRecords
+                if entry.skippedRecords > 0 { malformedFiles += 1 }
+                events.append(contentsOf: entry.events)
+            } catch {
                 cache[file.path] = nil
-                continue
+                evidence.skippedFiles += 1
             }
-
-            if let entry = cache[file.path], entry.modifiedAt == modifiedAt, entry.fileSize == fileSize {
-                events.append(contentsOf: entry.events.filter { $0.timestamp >= cutoffDate })
-                continue
-            }
-
-            let text = try String(contentsOf: file, encoding: .utf8)
-            var parsedEvents: [ClaudeObservedToolEvent] = []
-            var skippedLines = 0
-            for line in text.split(separator: "\n") {
-                guard let data = line.data(using: .utf8),
-                      let entry = try? decoder.decode(ClaudeTranscriptEntry.self, from: data) else {
-                    skippedLines += 1
-                    continue
-                }
-
-                guard entry.type == "tool_use" else {
-                    continue
-                }
-
-                guard let toolName = entry.toolName,
-                      let timestamp = parseDate(entry.timestamp) else {
-                    skippedLines += 1
-                    continue
-                }
-
-                parsedEvents.append(ClaudeObservedToolEvent(timestamp: timestamp, toolName: toolName))
-            }
-
-            if skippedLines > 0 {
-                skippedFilesCount += 1
-            }
-
-            cache[file.path] = FileCacheEntry(modifiedAt: modifiedAt, fileSize: fileSize, events: parsedEvents)
-            events.append(contentsOf: parsedEvents.filter { $0.timestamp >= cutoffDate })
         }
-        return ClaudeTranscriptLoadResult(events: events, skippedFilesCount: skippedFilesCount)
+        var seen: [String: String] = [:]
+        events = events.filter { event in
+            guard let id = event.toolUseID else { return true }
+            let fingerprint = event.payloadFingerprint ?? ""
+            if let previous = seen[id] {
+                evidence.duplicates += 1
+                if previous != fingerprint { evidence.skippedRecords += 1 }
+                return false
+            }
+            seen[id] = fingerprint
+            if event.inferredIdentity { evidence.inferredIdentities += 1 }
+            return true
+        }
+        evidence.finish(timestamps: events.map(\.timestamp))
+        return ClaudeTranscriptLoadResult(events: events.filter { $0.timestamp >= cutoffDate },
+            skippedFilesCount: evidence.skippedFiles + malformedFiles, evidence: evidence)
     }
 
-    private func parseDate(_ value: String) -> Date? {
-        if let date = fractionalFormatter.date(from: value) {
-            return date
+    private func parse(_ text: String, file: URL, digest: String) -> FileCacheEntry {
+        var events: [ClaudeObservedToolEvent] = []
+        var skipped = 0
+        for (lineIndex, line) in text.components(separatedBy: "\n").enumerated() {
+            guard !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                  let type = object["type"] as? String else { skipped += 1; continue }
+            let blocks: [Any]
+            if type == "assistant" {
+                guard let message = object["message"] as? [String: Any],
+                      let content = message["content"] as? [Any] else { skipped += 1; continue }
+                blocks = content
+            } else if type == "tool_use" {
+                guard let name = object["tool_name"] as? String else { skipped += 1; continue }
+                blocks = [["type": "tool_use", "name": name]]
+            } else { continue }
+
+            for (index, rawBlock) in blocks.enumerated() {
+                guard let block = rawBlock as? [String: Any], let blockType = block["type"] as? String else { skipped += 1; continue }
+                guard blockType == "tool_use" else { continue }
+                guard let name = block["name"] as? String, !name.isEmpty,
+                      let rawTimestamp = object["timestamp"] as? String,
+                      let timestamp = fractionalFormatter.date(from: rawTimestamp) ?? plainFormatter.date(from: rawTimestamp) else {
+                    skipped += 1; continue
+                }
+                var skillName: String?
+                if name.lowercased() == "skill" {
+                    guard let input = block["input"] as? [String: Any],
+                          let skill = input["skill"] as? String, !skill.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                        skipped += 1; continue
+                    }
+                    skillName = skill
+                }
+                let nativeID = (block["id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                let id = nativeID ?? UsageEventIdentity.fingerprint(["timestamp": rawTimestamp, "block": block, "index": index])
+                events.append(ClaudeObservedToolEvent(timestamp: timestamp, toolName: name, skillName: skillName,
+                    toolUseID: id, reference: UsageRecordReference(file: file.path, record: "line \(lineIndex + 1), block \(index + 1)"),
+                    inferredIdentity: nativeID == nil,
+                    payloadFingerprint: UsageEventIdentity.fingerprint(["timestamp": rawTimestamp, "block": block])))
+            }
         }
-        return plainFormatter.date(from: value)
+        return FileCacheEntry(digest: digest, events: events, skippedRecords: skipped)
     }
 }
 
 private struct FileCacheEntry {
-    let modifiedAt: Date
-    let fileSize: Int
+    let digest: String
     let events: [ClaudeObservedToolEvent]
-}
-
-private struct ClaudeTranscriptEntry: Decodable {
-    let type: String
-    let timestamp: String
-    let toolName: String?
-
-    enum CodingKeys: String, CodingKey {
-        case type
-        case timestamp
-        case toolName = "tool_name"
-    }
+    let skippedRecords: Int
 }

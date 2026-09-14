@@ -19,6 +19,7 @@ public struct GeminiProcessRunner: GeminiCommandRunning {
         let process = Process()
         process.executableURL = executableURL
         process.arguments = arguments
+        process.environment = executableLocator.processEnvironment(for: executableURL)
 
         let stdout = Pipe()
         let stderr = Pipe()

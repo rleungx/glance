@@ -3,6 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 import GlanceCore
 
+@MainActor
 struct GlanceSettingsView: View {
     @ObservedObject var store: GlanceStore
     @ObservedObject var updater: GlanceUpdater
@@ -61,6 +62,20 @@ struct GlanceSettingsView: View {
                 Text(store.currentDiagnostics.summary)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            settingRow {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(store.usageEvidence.summary)
+                    Text("\(store.usageEvidence.filesRead) files read · \(store.usageEvidence.duplicates) duplicates excluded · \(store.usageEvidence.inferredIdentities) inferred event IDs")
+                    if let first = store.usageEvidence.observedFrom, let last = store.usageEvidence.observedThrough {
+                        Text("Observed records: \(first.formatted(date: .abbreviated, time: .omitted)) – \(last.formatted(date: .abbreviated, time: .omitted))")
+                    }
+                    ForEach(store.usageEvidence.sources, id: \.self) { source in
+                        Text((source as NSString).abbreviatingWithTildeInPath).textSelection(.enabled)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
         })
     }
@@ -343,7 +358,8 @@ struct GlanceSettingsView: View {
             policy: store.policy,
             lastRefreshAt: store.lastRefreshAt,
             errorMessage: store.errorMessage,
-            noticeMessage: store.noticeMessage
+            noticeMessage: store.noticeMessage,
+            evidence: store.usageEvidence
         )
     }
 

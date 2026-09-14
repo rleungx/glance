@@ -4,15 +4,18 @@ public enum CapabilityRanker {
     public static func buildSnapshot(
         from capabilities: [CapabilityUsage],
         policy: RankingPolicy = .default,
-        now: Date = .now
+        now: Date = .now,
+        evidence: UsageEvidence = UsageEvidence(),
+        sourceID: String? = nil,
+        window: RollingWindow? = nil
     ) -> RankingSnapshot {
         let scoreByCapability = makeScoreLookup(for: capabilities, policy: policy, now: now)
         let allCapabilities = sorted(capabilities, scoreByCapability: scoreByCapability)
         let skills = allCapabilities.filter { $0.id.kind == .skill }
         let mcpTools = allCapabilities.filter { $0.id.kind == .mcpTool }
         let mcpServers = allCapabilities.filter { $0.id.kind == .mcpServer }
-        let stale = sorted(capabilities.filter { isStale($0, policy: policy, now: now) }, scoreByCapability: scoreByCapability)
-        let removalCandidates = sorted(capabilities.filter { isRemovalCandidate($0, policy: policy, now: now) }, scoreByCapability: scoreByCapability)
+        let stale = sorted(capabilities.filter { isStale($0, policy: policy, now: now, evidence: evidence) }, scoreByCapability: scoreByCapability)
+        let removalCandidates = sorted(capabilities.filter { isRemovalCandidate($0, policy: policy, now: now, evidence: evidence) }, scoreByCapability: scoreByCapability)
 
         return RankingSnapshot(
             generatedAt: now,
@@ -21,7 +24,10 @@ public enum CapabilityRanker {
             mcpTools: mcpTools,
             mcpServers: mcpServers,
             stale: stale,
-            removalCandidates: removalCandidates
+            removalCandidates: removalCandidates,
+            evidence: evidence,
+            sourceID: sourceID,
+            window: window
         )
     }
 
@@ -93,8 +99,10 @@ public enum CapabilityRanker {
     public static func isStale(
         _ capability: CapabilityUsage,
         policy: RankingPolicy = .default,
-        now: Date = .now
+        now: Date = .now,
+        evidence: UsageEvidence = UsageEvidence()
     ) -> Bool {
+        guard evidence.covers(since: now.addingTimeInterval(-Double(policy.staleAfterDays) * 86_400), through: now) else { return false }
         if capability.usageCount == 0 {
             return policy.neverUsedCountsAsStale && capability.installedButUnused
         }
@@ -109,8 +117,10 @@ public enum CapabilityRanker {
     public static func isRemovalCandidate(
         _ capability: CapabilityUsage,
         policy: RankingPolicy = .default,
-        now: Date = .now
+        now: Date = .now,
+        evidence: UsageEvidence = UsageEvidence()
     ) -> Bool {
+        guard evidence.covers(since: now.addingTimeInterval(-Double(policy.removalAfterDays) * 86_400), through: now) else { return false }
         if capability.usageCount == 0 {
             return capability.installedButUnused
         }

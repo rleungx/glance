@@ -1,4 +1,5 @@
 import Foundation
+import GlanceCore
 
 public struct CodexInstalledSkill: Hashable, Sendable {
     public let name: String
@@ -14,11 +15,23 @@ public struct CodexObservedToolEvent: Sendable {
     public let timestamp: Date
     public let serverName: String
     public let toolName: String
+    public let skillName: String?
+    public let reference: UsageRecordReference?
 
-    public init(timestamp: Date, serverName: String, toolName: String) {
+    public init(timestamp: Date, serverName: String, toolName: String, reference: UsageRecordReference? = nil) {
         self.timestamp = timestamp
         self.serverName = serverName
         self.toolName = toolName
+        self.skillName = nil
+        self.reference = reference
+    }
+
+    public init(timestamp: Date, skillName: String, reference: UsageRecordReference? = nil) {
+        self.timestamp = timestamp
+        self.serverName = ""
+        self.toolName = ""
+        self.skillName = skillName
+        self.reference = reference
     }
 }
 
@@ -26,11 +39,13 @@ public struct CodexTranscriptLoadResult: Sendable {
     public let events: [CodexObservedToolEvent]
     public let skippedFilesCount: Int
     public let skippedEntriesCount: Int
+    public let evidence: UsageEvidence
 
-    public init(events: [CodexObservedToolEvent], skippedFilesCount: Int, skippedEntriesCount: Int) {
+    public init(events: [CodexObservedToolEvent], skippedFilesCount: Int, skippedEntriesCount: Int, evidence: UsageEvidence = UsageEvidence()) {
         self.events = events
         self.skippedFilesCount = skippedFilesCount
         self.skippedEntriesCount = skippedEntriesCount
+        self.evidence = evidence
     }
 }
 

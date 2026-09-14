@@ -19,7 +19,7 @@ func repositoryIncludesInstalledButUnusedSkillsFromSkillsDirectory() async throw
 
     #expect(skill != nil)
     #expect(skill?.usageCount == 0)
-    #expect(skill?.installedButUnused == true)
+    #expect(skill?.installedButUnused == false)
 }
 
 @Test
@@ -188,6 +188,79 @@ func repositoryLoadCapabilitiesUsesThirtyDayWindow() async throws {
     #expect(defaultSkill?.usageCount == day30Skill?.usageCount)
     #expect(day30Skill?.usageCount == 1)
     #expect(day45Skill?.usageCount == 2)
+}
+
+@Test
+func repositoryUsesRuntimeMCPsWhenGlobalConfigOnlyContainsModel() async throws {
+    let fixture = try makeRepositoryFixture(mcpConfigJSON: #"{"model":"provider/model"}"#)
+    defer { try? FileManager.default.removeItem(at: fixture.tempRoot) }
+    let timestamp = timestampMilliseconds(daysAgo: 1)
+    let json = #"{"type":"tool","tool":"project-mcp_search","state":{"status":"completed","time":{"start":1000,"end":1300}}}"#
+    try fixture.connection.execute("INSERT INTO part VALUES ('1', 'msg', 'session', \(timestamp), \(timestamp), '\(json)');")
+    let capabilities = try await makeRepository(paths: fixture.paths, runtimeServers: ["project-mcp"]).loadCapabilities()
+    #expect(capabilities.first { $0.id.kind == .mcpServer && $0.id.namespace == "project-mcp" }?.usageCount == 1)
+    #expect(capabilities.first { $0.id.kind == .mcpTool && $0.id.name == "search" }?.usageCount == 1)
+}
+
+@Test
+func repositoryCleanupPreservesHistoricalCountsAndFailureEvidence() async throws {
+    let fixture = try makeRepositoryFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.tempRoot) }
+    let now = Date()
+    let timestamp = timestampMilliseconds(daysAgo: 200, now: now)
+    for (name, count, status) in [("frequent", 100, "completed"), ("rare", 1, "completed"), ("failing", 100, "error")] {
+        let directory = fixture.skillsDirectory.appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "# Skill".write(to: directory.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+        for index in 0..<count {
+            let json = "{\"type\":\"tool\",\"tool\":\"skill\",\"state\":{\"status\":\"\(status)\",\"input\":{\"name\":\"\(name)\"},\"time\":{\"start\":1000,\"end\":1300}}}"
+            try fixture.connection.execute("INSERT INTO part VALUES ('\(name)-\(index)', 'msg', 'session', \(timestamp), \(timestamp), '\(json)');")
+        }
+    }
+    let windows = try await makeRepository(paths: fixture.paths, runtimeServers: []).loadCapabilities(windows: [.day7, .allTime], now: now)
+    let history = try #require(windows[.allTime])
+    let snapshot = CapabilityRanker.buildSnapshot(from: history, now: now)
+    #expect(history.first { $0.id.name == "frequent" }?.usageCount == 100)
+    #expect(history.first { $0.id.name == "failing" }?.failureCount == 100)
+    #expect(!snapshot.removalCandidates.contains { $0.id.name == "frequent" })
+    #expect(snapshot.removalCandidates.isEmpty)
+    let verified = CapabilityRanker.buildSnapshot(from: history, now: now,
+        evidence: UsageEvidence(completeness: .verified, verifiedFrom: .distantPast, verifiedThrough: now))
+    #expect(verified.removalCandidates.contains { $0.id.name == "rare" })
+    #expect(verified.removalCandidates.contains { $0.id.name == "failing" })
+    #expect(!verified.removalCandidates.contains { $0.id.name == "frequent" })
+    #expect(windows[.day7]?.allSatisfy { $0.usageCount == 0 } == true)
+}
+
+@Test
+func repositoryMissingDatabaseReportsUnavailableAndPausesCleanup() async throws {
+    let fixture = try makeRepositoryFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.tempRoot) }
+    try FileManager.default.removeItem(at: fixture.paths.databaseURL)
+    let result = try await makeRepository(paths: fixture.paths, runtimeServers: []).loadUsage(windows: [.allTime], now: .now)
+    #expect(result.evidence.completeness == .unavailable)
+    #expect(result.windows[.allTime]?.allSatisfy { !$0.installedButUnused } == true)
+    #expect(CapabilityRanker.buildSnapshot(from: result.windows[.allTime] ?? [], evidence: result.evidence).removalCandidates.isEmpty)
+}
+
+@Test
+func repositoryExcludesFutureRowsAndRetainsDatabaseEvidence() async throws {
+    let fixture = try makeRepositoryFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.tempRoot) }
+    let now = Date.now
+    for (id, day) in [("past", 1), ("future", -1)] {
+        let timestamp = timestampMilliseconds(daysAgo: day, now: now)
+        let json = #"{"type":"tool","tool":"mem0-mcp_search","state":{"status":"completed"}}"#
+        try fixture.connection.execute("INSERT INTO part VALUES ('\(id)', 'msg', 'session', \(timestamp), \(timestamp), '\(json)');")
+    }
+    let result = try await makeRepository(paths: fixture.paths, runtimeServers: []).loadUsage(windows: [.allTime, .day7], now: now)
+    for usages in result.windows.values {
+        let tool = try #require(usages.first { $0.id.kind == .mcpTool })
+        #expect(tool.usageCount == 1)
+        #expect(tool.evidenceSamples?.first?.record == "part.id=past")
+    }
+    #expect(result.evidence.completeness == .observed)
+    #expect(result.evidence.observedThrough! < now)
 }
 
 private func makeRepositoryFixture(mcpConfigJSON: String = """

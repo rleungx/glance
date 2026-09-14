@@ -4,7 +4,7 @@ import GlanceCore
 @testable import GlanceCodex
 
 @Test
-func codexRepositoryIncludesInstalledSkillsAsUnused() async throws {
+func codexRepositoryLeavesUnobservedSkillUsageUnknown() async throws {
     let fixture = try makeFixture()
     defer { try? FileManager.default.removeItem(at: fixture.tempRoot) }
 
@@ -21,7 +21,8 @@ func codexRepositoryIncludesInstalledSkillsAsUnused() async throws {
     let skill = capabilities.first { $0.id.kind == .skill && $0.id.name == "my-skill" }
     #expect(skill != nil)
     #expect(skill?.usageCount == 0)
-    #expect(skill?.installedButUnused == true)
+    #expect(skill?.installedButUnused == false)
+    #expect(CapabilityRanker.buildSnapshot(from: capabilities).removalCandidates.isEmpty)
 }
 
 @Test
@@ -119,6 +120,34 @@ func codexReaderDoesNotTreatNonMcpFunctionCallsAsParseLoss() throws {
     #expect(result.events.isEmpty)
     #expect(result.skippedEntriesCount == 0)
     #expect(result.skippedFilesCount == 0)
+}
+
+@Test
+func codexRepositoryCountsSelectedSkillsWithoutCountingCatalogMentions() async throws {
+    let fixture = try makeFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.tempRoot) }
+    let skillDirectory = fixture.paths.skillsDirectory.appendingPathComponent("My-Skill")
+    try FileManager.default.createDirectory(at: skillDirectory, withIntermediateDirectories: true)
+    try "# Skill".write(to: skillDirectory.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+    func message(role: String, text: String, timestamp: String) throws -> String {
+        let data = try JSONSerialization.data(withJSONObject: ["type": "response_item", "timestamp": timestamp, "payload": ["type": "message", "role": role, "content": [["type": "input_text", "text": text]]]])
+        return String(decoding: data, as: UTF8.self)
+    }
+    let skillText = "<skill>\n<name>my-skill</name>\n<path>/skills/My-Skill/SKILL.md</path>\n# Instructions\n</skill>"
+    try writeSession(to: fixture.paths.sessionsDirectory.appendingPathComponent("2026/session.jsonl"), lines: [
+        try message(role: "user", text: skillText, timestamp: "2025-01-01T12:00:00Z"),
+        try message(role: "user", text: skillText, timestamp: "2026-04-01T12:00:00.000Z"),
+        try message(role: "assistant", text: skillText, timestamp: "2026-04-01T12:00:00Z"),
+        try message(role: "user", text: "Available skills: my-skill (/skills/My-Skill/SKILL.md)", timestamp: "2026-04-01T12:00:00Z"),
+    ])
+    let repository = CodexUsageRepository(configLoader: CodexConfigLoader(paths: fixture.paths), transcriptReader: CodexTranscriptUsageReader(paths: fixture.paths))
+    let now = ISO8601DateFormatter().date(from: "2026-04-02T12:00:00Z")!
+    let windows = try await repository.loadCapabilities(windows: [.allTime, .day7], now: now)
+    let allTime = try #require(windows[.allTime]?.first { $0.id.kind == .skill })
+    #expect(allTime.id.name == "My-Skill")
+    #expect(allTime.usageCount == 2)
+    #expect(!allTime.installedButUnused)
+    #expect(windows[.day7]?.first { $0.id.kind == .skill }?.usageCount == 1)
 }
 
 private func makeFixture() throws -> (tempRoot: URL, paths: CodexPaths) {

@@ -8,6 +8,10 @@ public final class GeminiConfigLoader {
     private let cacheTTL: TimeInterval
     private var skillsCache: (fetchedAt: Date, value: [GeminiInstalledSkill])?
     private var mcpCache: (fetchedAt: Date, value: [GeminiConfiguredMCPServer])?
+    private var skillsOutputRecognized = true
+    private var mcpOutputRecognized = true
+
+    public var hasUnrecognizedOutput: Bool { !skillsOutputRecognized || !mcpOutputRecognized }
 
     public init(
         paths: GeminiPaths = .live,
@@ -30,6 +34,7 @@ public final class GeminiConfigLoader {
         }
         let output = try commandRunner.run(arguments: ["skills", "list", "--all"])
         let value = Self.parseSkillsListOutput(output)
+        skillsOutputRecognized = !value.isEmpty || output.localizedCaseInsensitiveContains("No skills installed") || output.localizedCaseInsensitiveContains("No skills found")
         skillsCache = (now, value)
         return value
     }
@@ -41,6 +46,7 @@ public final class GeminiConfigLoader {
         }
         let output = try commandRunner.run(arguments: ["mcp", "list"])
         let value = Self.parseMCPListOutput(output)
+        mcpOutputRecognized = !value.isEmpty || output.localizedCaseInsensitiveContains("No MCP servers configured.")
         mcpCache = (now, value)
         return value
     }

@@ -182,11 +182,17 @@ func geminiUsageRepositorySupportsNinetyAndOneHundredTwentyDayLookback() async t
     )
     let formatter = ISO8601DateFormatter()
     let now = formatter.date(from: "2026-04-01T12:00:00Z")!
-    let windows = try await repo.loadCapabilities(windows: [.day90, .day120], now: now)
+    let windows = try await repo.loadCapabilities(windows: [.day90, .day120, .allTime], now: now)
 
     #expect(windows[.day90]?.contains(where: { $0.id.kind == .mcpTool && $0.id.name == "get_memories" }) == true)
     #expect(windows[.day90]?.contains(where: { $0.id.kind == .mcpTool && $0.id.name == "search" }) == false)
     #expect(windows[.day120]?.contains(where: { $0.id.kind == .mcpTool && $0.id.name == "search" }) == true)
+    #expect(windows[.allTime]?.first(where: { $0.id.kind == .mcpServer })?.usageCount == 2)
+
+    let future = now.addingTimeInterval(365 * 86_400)
+    let historical = try await repo.loadCapabilities(windows: [.day7, .allTime], now: future)
+    #expect(historical[.day7]?.allSatisfy { $0.usageCount == 0 } == true)
+    #expect(historical[.allTime]?.first(where: { $0.id.kind == .mcpServer })?.usageCount == 2)
 }
 
 @Test

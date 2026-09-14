@@ -39,20 +39,25 @@ func staleAndRemovalClassificationUsePolicyThresholds() {
         successCount: 2
     )
 
-    #expect(CapabilityRanker.isStale(staleSkill, policy: policy, now: now))
-    #expect(CapabilityRanker.isRemovalCandidate(staleSkill, policy: policy, now: now))
+    let evidence = UsageEvidence(completeness: .verified, verifiedFrom: .distantPast, verifiedThrough: now)
+    #expect(CapabilityRanker.isStale(staleSkill, policy: policy, now: now, evidence: evidence))
+    #expect(CapabilityRanker.isRemovalCandidate(staleSkill, policy: policy, now: now, evidence: evidence))
 }
 
 @Test
-func installedButUnusedCapabilitiesAppearAsStale() {
+func installedButUnusedCapabilitiesRequireVerifiedCoverage() {
     let unused = CapabilityUsage(
         id: CapabilityID(kind: .mcpServer, namespace: "mem0-mcp", name: "mem0-mcp"),
         usageCount: 0,
         installedButUnused: true
     )
 
-    #expect(CapabilityRanker.isStale(unused))
-    #expect(CapabilityRanker.isRemovalCandidate(unused))
+    #expect(!CapabilityRanker.isStale(unused))
+    #expect(!CapabilityRanker.isRemovalCandidate(unused))
+    let now = Date.now
+    let evidence = UsageEvidence(completeness: .verified, verifiedFrom: .distantPast, verifiedThrough: now)
+    #expect(CapabilityRanker.isStale(unused, now: now, evidence: evidence))
+    #expect(CapabilityRanker.isRemovalCandidate(unused, now: now, evidence: evidence))
 }
 
 @Test
