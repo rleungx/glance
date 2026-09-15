@@ -8,7 +8,7 @@ func codexDeduplicatesArchivedCallsButPreservesDistinctInvocations() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let paths = CodexPaths(homeDirectory: root)
-    let first = #"{"type":"response_item","timestamp":"2026-04-01T12:00:00Z","payload":{"type":"function_call","call_id":"a","name":"mcp__docs__search","arguments":"{}"}}"#
+    let first = #"{"type":"response_item","timestamp":"2026-04-01T12:00:00Z","payload":{"type":"message","role":"user","id":"a","content":[{"type":"input_text","text":"<skill>\n<name>search</name>\n<path>/skills/search/SKILL.md</path>\nInstructions\n</skill>"}]}}"#
     for directory in paths.sessionDirectories {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try first.write(to: directory.appendingPathComponent("session.jsonl"), atomically: true, encoding: .utf8)

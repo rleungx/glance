@@ -30,7 +30,7 @@ public actor CodexUsageRepository: EvidenceReportingRepository, WarningReporting
         if inventory.errors > 0 { evidence.completeness = .partial }
         let events = loadResult.events.filter { $0.timestamp <= now }
         let installedNames = Set(installedSkills.map { $0.name.lowercased() })
-        evidence.unmatchedRecords = events.filter { event in event.skillName.map { !installedNames.contains($0.lowercased()) } ?? false }.count
+        evidence.unmatchedRecords = events.filter { event in !installedNames.contains(event.skillName.lowercased()) }.count
         if evidence.unmatchedRecords > 0 { evidence.completeness = .partial }
         evidence.skippedRecords += loadResult.events.count - events.count
         if evidence.skippedRecords > 0 { evidence.completeness = .partial }
@@ -72,25 +72,12 @@ public actor CodexUsageRepository: EvidenceReportingRepository, WarningReporting
             capabilities[id] = CapabilityUsage(id: id, usageCount: 0)
         }
 
-        var serverAccumulators: [CapabilityID: CapabilityUsage] = [:]
         for event in events {
-            if let name = event.skillName, let canonical = skillNames[name.lowercased()] {
+            if let canonical = skillNames[event.skillName.lowercased()] {
                 let id = CapabilityID(kind: .skill, name: canonical)
                 let usage = CapabilityUsage(id: id, usageCount: 1, firstUsedAt: event.timestamp, lastUsedAt: event.timestamp, evidenceSamples: event.reference.map { [$0] })
                 capabilities[id] = merge(capabilities[id] ?? CapabilityUsage(id: id, usageCount: 0), with: usage)
-                continue
             }
-            guard event.skillName == nil else { continue }
-            let toolID = CapabilityID(kind: .mcpTool, namespace: event.serverName, name: event.toolName)
-            let serverID = CapabilityID(kind: .mcpServer, namespace: event.serverName, name: event.serverName)
-            let usage = CapabilityUsage(id: toolID, usageCount: 1, firstUsedAt: event.timestamp, lastUsedAt: event.timestamp, evidenceSamples: event.reference.map { [$0] })
-            let serverUsage = CapabilityUsage(id: serverID, usageCount: 1, firstUsedAt: event.timestamp, lastUsedAt: event.timestamp, evidenceSamples: event.reference.map { [$0] })
-            capabilities[toolID] = merge(capabilities[toolID] ?? CapabilityUsage(id: toolID, usageCount: 0, installedButUnused: false), with: usage)
-            serverAccumulators[serverID] = merge(serverAccumulators[serverID] ?? CapabilityUsage(id: serverID, usageCount: 0, installedButUnused: false), with: serverUsage)
-        }
-
-        for (serverID, usage) in serverAccumulators {
-            capabilities[serverID] = merge(capabilities[serverID] ?? CapabilityUsage(id: serverID, usageCount: 0, installedButUnused: false), with: usage)
         }
 
         return Array(capabilities.values)

@@ -13,23 +13,11 @@ public struct CodexInstalledSkill: Hashable, Sendable {
 
 public struct CodexObservedToolEvent: Sendable {
     public let timestamp: Date
-    public let serverName: String
-    public let toolName: String
-    public let skillName: String?
+    public let skillName: String
     public let reference: UsageRecordReference?
-
-    public init(timestamp: Date, serverName: String, toolName: String, reference: UsageRecordReference? = nil) {
-        self.timestamp = timestamp
-        self.serverName = serverName
-        self.toolName = toolName
-        self.skillName = nil
-        self.reference = reference
-    }
 
     public init(timestamp: Date, skillName: String, reference: UsageRecordReference? = nil) {
         self.timestamp = timestamp
-        self.serverName = ""
-        self.toolName = ""
         self.skillName = skillName
         self.reference = reference
     }

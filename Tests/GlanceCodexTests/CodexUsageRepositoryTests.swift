@@ -26,15 +26,16 @@ func codexRepositoryLeavesUnobservedSkillUsageUnknown() async throws {
 }
 
 @Test
-func codexRepositoryAggregatesMcpUsageAcrossWindows() async throws {
+func codexRepositoryAggregatesSkillUsageAcrossWindows() async throws {
     let fixture = try makeFixture()
     defer { try? FileManager.default.removeItem(at: fixture.tempRoot) }
 
+    try installSkills(paths: fixture.paths)
     try writeSession(
         to: fixture.paths.sessionsDirectory.appending(path: "2026/04/04/session.jsonl"),
         lines: [
-            sessionLine(daysAgo: 1, name: "mcp__chat__send_message"),
-            sessionLine(daysAgo: 10, name: "mcp__chat__read_history"),
+            sessionLine(daysAgo: 1, name: "send_message"),
+            sessionLine(daysAgo: 10, name: "read_history"),
         ]
     )
 
@@ -45,13 +46,9 @@ func codexRepositoryAggregatesMcpUsageAcrossWindows() async throws {
     let now = Date(timeIntervalSince1970: 1_744_000_000)
     let output = try await repository.loadCapabilities(windows: [.day7, .day30], now: now)
 
-    let day7Server = output[.day7]?.first { $0.id.kind == .mcpServer && $0.id.namespace == "chat" }
-    let day30Server = output[.day30]?.first { $0.id.kind == .mcpServer && $0.id.namespace == "chat" }
-    let day7Tool = output[.day7]?.first { $0.id.kind == .mcpTool && $0.id.namespace == "chat" && $0.id.name == "send_message" }
-    let day30Tool = output[.day30]?.first { $0.id.kind == .mcpTool && $0.id.namespace == "chat" && $0.id.name == "read_history" }
+    let day7Tool = output[.day7]?.first { $0.id.kind == .skill && $0.usageCount > 0 && $0.id.name == "send_message" }
+    let day30Tool = output[.day30]?.first { $0.id.kind == .skill && $0.usageCount > 0 && $0.id.name == "read_history" }
 
-    #expect(day7Server?.usageCount == 1)
-    #expect(day30Server?.usageCount == 2)
     #expect(day7Tool?.usageCount == 1)
     #expect(day30Tool?.usageCount == 1)
 }
@@ -62,11 +59,12 @@ func codexRepositoryLoadCapabilitiesUsesThirtyDayWindow() async throws {
     defer { try? FileManager.default.removeItem(at: fixture.tempRoot) }
     let now = Date()
 
+    try installSkills(paths: fixture.paths)
     try writeSession(
         to: fixture.paths.sessionsDirectory.appending(path: "2026/04/04/session.jsonl"),
         lines: [
-            sessionLine(daysAgo: 10, name: "mcp__chat__send_message", now: now),
-            sessionLine(daysAgo: 40, name: "mcp__chat__read_history", now: now),
+            sessionLine(daysAgo: 10, name: "send_message", now: now),
+            sessionLine(daysAgo: 40, name: "read_history", now: now),
         ]
     )
 
@@ -76,20 +74,20 @@ func codexRepositoryLoadCapabilitiesUsesThirtyDayWindow() async throws {
     )
     let capabilities = try await repository.loadCapabilities()
 
-    #expect(capabilities.contains { $0.id.kind == .mcpTool && $0.id.namespace == "chat" && $0.id.name == "send_message" })
-    #expect(!capabilities.contains { $0.id.kind == .mcpTool && $0.id.namespace == "chat" && $0.id.name == "read_history" })
+    #expect(capabilities.contains { $0.id.kind == .skill && $0.usageCount > 0 && $0.id.name == "send_message" })
+    #expect(!capabilities.contains { $0.id.kind == .skill && $0.usageCount > 0 && $0.id.name == "read_history" })
 }
 
 @Test
-func codexRepositoryWarnsWhenSessionContainsMalformedMcpEntries() async throws {
+func codexRepositoryWarnsWhenSessionContainsMalformedSkillEntries() async throws {
     let fixture = try makeFixture()
     defer { try? FileManager.default.removeItem(at: fixture.tempRoot) }
 
     try writeSession(
         to: fixture.paths.sessionsDirectory.appending(path: "2026/04/04/session.jsonl"),
         lines: [
-            sessionLine(daysAgo: 1, name: "mcp__chat__send_message"),
-            "{\"timestamp\":\"2026-04-04T00:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"mcp__broken\"}}",
+            sessionLine(daysAgo: 1, name: "send_message"),
+            #"{"timestamp":"2026-04-04T00:00:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<skill><name>broken</name></skill>"}]}}"#,
             "not json at all",
         ]
     )
@@ -105,14 +103,15 @@ func codexRepositoryWarnsWhenSessionContainsMalformedMcpEntries() async throws {
 }
 
 @Test
-func codexReaderDoesNotTreatNonMcpFunctionCallsAsParseLoss() throws {
+func codexReaderDoesNotTreatFunctionCallsAsParseLoss() throws {
     let fixture = try makeFixture()
     defer { try? FileManager.default.removeItem(at: fixture.tempRoot) }
 
     try writeSession(
         to: fixture.paths.sessionsDirectory.appending(path: "2026/04/04/session.jsonl"),
         lines: [
-            sessionLine(daysAgo: 1, name: "apply_patch"),
+            #"{"timestamp":"invalid","type":"response_item","payload":{"type":"function_call","name":"mcp__docs__search"}}"#,
+            #"{"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch"}}"#,
         ]
     )
 
@@ -170,11 +169,19 @@ private func writeSession(to url: URL, lines: [String]) throws {
 private func sessionLine(daysAgo: Int, name: String, now: Date = Date(timeIntervalSince1970: 1_744_000_000)) -> String {
     let date = Calendar.current.date(byAdding: .day, value: -daysAgo, to: now) ?? now
     let timestamp = makeDateFormatter().string(from: date)
-    return "{\"timestamp\":\"\(timestamp)\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"\(name)\"}}"
+    return #"{"timestamp":"\#(timestamp)","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<skill>\n<name>\#(name)</name>\n<path>/skills/\#(name)/SKILL.md</path>\nInstructions\n</skill>"}]}}"#
 }
 
 private func makeDateFormatter() -> ISO8601DateFormatter {
     let formatter = ISO8601DateFormatter()
     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     return formatter
+}
+
+private func installSkills(paths: CodexPaths) throws {
+    for name in ["send_message", "read_history"] {
+        let directory = paths.skillsDirectory.appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "# Skill".write(to: directory.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+    }
 }

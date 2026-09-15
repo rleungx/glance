@@ -4,7 +4,7 @@ import GlanceCore
 @testable import GlanceOpenCode
 
 @Test
-func usageReaderAggregatesSkillAndMCPToolInvocations() throws {
+func usageReaderCountsOnlySkillsInMixedToolHistory() throws {
     let fixture = try makeFixtureDatabase()
     defer { try? FileManager.default.removeItem(at: fixture.tempRoot) }
 
@@ -13,106 +13,18 @@ func usageReaderAggregatesSkillAndMCPToolInvocations() throws {
     try fixture.connection.execute("INSERT INTO part VALUES ('1', 'msg1', 'ses1', 1700000000000, 1700000000000, '\(skillJSON)');")
     try fixture.connection.execute("INSERT INTO part VALUES ('2', 'msg2', 'ses1', 1700000100000, 1700000100000, '\(mcpJSON)');")
 
+    let bridgeJSON = #"{"type":"tool","tool":"skill_mcp","state":{"status":"completed","input":{"name":"find-skills","mcp_name":"docs","tool_name":"search"}}}"#
+    try fixture.connection.execute("INSERT INTO part VALUES ('3', 'msg3', 'ses1', 1700000200000, 1700000200000, '\(bridgeJSON)');")
+
     let reader = OpenCodeUsageReader(paths: fixture.paths)
-    let usages = try reader.loadObservedCapabilities(mcpServerNames: Set(["mem0-mcp"]))
+    let usages = try reader.loadObservedCapabilities()
     let identifiers = Set(usages.map(\.usage.id.rawValue))
 
     #expect(identifiers.contains(CapabilityID(kind: .skill, name: "find-skills").rawValue))
-    #expect(identifiers.contains(CapabilityID(kind: .mcpTool, namespace: "mem0-mcp", name: "get_memories").rawValue))
-}
-
-@Test
-func usageReaderRecognizesRuntimeMCPServersIncludingContext7WebsearchAndGrepApp() throws {
-    let fixture = try makeFixtureDatabase()
-    defer { try? FileManager.default.removeItem(at: fixture.tempRoot) }
-
-    let context7JSON = "{\"type\":\"tool\",\"tool\":\"Context7_query-docs\",\"state\":{\"status\":\"completed\",\"time\":{\"start\":3000,\"end\":3900}}}"
-    let websearchBuiltInJSON = "{\"type\":\"tool\",\"tool\":\"WebSearch\",\"state\":{\"status\":\"completed\",\"time\":{\"start\":4000,\"end\":4600}}}"
-    let websearchExaJSON = "{\"type\":\"tool\",\"tool\":\"WebSearch_web_search_exa\",\"state\":{\"status\":\"completed\",\"time\":{\"start\":5000,\"end\":6200}}}"
-    let grepAppJSON = "{\"type\":\"tool\",\"tool\":\"grep_app_searchGitHub\",\"state\":{\"status\":\"completed\",\"time\":{\"start\":7000,\"end\":7600}}}"
-
-    try fixture.connection.execute("INSERT INTO part VALUES ('1', 'msg1', 'ses1', 1700000000000, 1700000000000, '\(context7JSON)');")
-    try fixture.connection.execute("INSERT INTO part VALUES ('2', 'msg2', 'ses1', 1700000100000, 1700000100000, '\(websearchBuiltInJSON)');")
-    try fixture.connection.execute("INSERT INTO part VALUES ('3', 'msg3', 'ses1', 1700000200000, 1700000200000, '\(websearchExaJSON)');")
-    try fixture.connection.execute("INSERT INTO part VALUES ('4', 'msg4', 'ses1', 1700000300000, 1700000300000, '\(grepAppJSON)');")
-
-    let reader = OpenCodeUsageReader(paths: fixture.paths)
-    let usages = try reader.loadObservedCapabilities(mcpServerNames: Set(["context7", "websearch", "grep_app"]))
-    let identifiers = Set(usages.map(\.usage.id.rawValue))
-
-    #expect(identifiers.contains(CapabilityID(kind: .mcpTool, namespace: "context7", name: "query-docs").rawValue))
-    #expect(identifiers.contains(CapabilityID(kind: .mcpTool, namespace: "websearch", name: "web_search_exa").rawValue))
-    #expect(identifiers.contains(CapabilityID(kind: .mcpTool, namespace: "grep_app", name: "searchgithub").rawValue))
-    #expect(!identifiers.contains(CapabilityID(kind: .mcpTool, namespace: "websearch", name: "websearch").rawValue))
-}
-
-@Test
-func usageReaderDoesNotTreatBuiltInCodeSearchAndWebSearchAsMCPWithoutPrefix() throws {
-    let fixture = try makeFixtureDatabase()
-    defer { try? FileManager.default.removeItem(at: fixture.tempRoot) }
-
-    let codeSearchBuiltInJSON = "{\"type\":\"tool\",\"tool\":\"CodeSearch\",\"state\":{\"status\":\"completed\",\"time\":{\"start\":3000,\"end\":3900}}}"
-    let codeSearchPrefixedJSON = "{\"type\":\"tool\",\"tool\":\"codesearch_searchGitHub\",\"state\":{\"status\":\"completed\",\"time\":{\"start\":4000,\"end\":4600}}}"
-    let websearchBuiltInJSON = "{\"type\":\"tool\",\"tool\":\"WebSearch\",\"state\":{\"status\":\"completed\",\"time\":{\"start\":5000,\"end\":5600}}}"
-    let websearchPrefixedJSON = "{\"type\":\"tool\",\"tool\":\"websearch_web_search_exa\",\"state\":{\"status\":\"completed\",\"time\":{\"start\":6000,\"end\":6900}}}"
-
-    try fixture.connection.execute("INSERT INTO part VALUES ('1', 'msg1', 'ses1', 1700000000000, 1700000000000, '\(codeSearchBuiltInJSON)');")
-    try fixture.connection.execute("INSERT INTO part VALUES ('2', 'msg2', 'ses1', 1700000100000, 1700000100000, '\(codeSearchPrefixedJSON)');")
-    try fixture.connection.execute("INSERT INTO part VALUES ('3', 'msg3', 'ses1', 1700000200000, 1700000200000, '\(websearchBuiltInJSON)');")
-    try fixture.connection.execute("INSERT INTO part VALUES ('4', 'msg4', 'ses1', 1700000300000, 1700000300000, '\(websearchPrefixedJSON)');")
-
-    let reader = OpenCodeUsageReader(paths: fixture.paths)
-    let usages = try reader.loadObservedCapabilities(mcpServerNames: Set(["codesearch", "websearch"]))
-    let identifiers = Set(usages.map(\.usage.id.rawValue))
-
-    #expect(identifiers.contains(CapabilityID(kind: .mcpTool, namespace: "codesearch", name: "searchgithub").rawValue))
-    #expect(identifiers.contains(CapabilityID(kind: .mcpTool, namespace: "websearch", name: "web_search_exa").rawValue))
-    #expect(!identifiers.contains(CapabilityID(kind: .mcpTool, namespace: "codesearch", name: "codesearch").rawValue))
-    #expect(!identifiers.contains(CapabilityID(kind: .mcpTool, namespace: "websearch", name: "websearch").rawValue))
-}
-
-@Test
-func usageReaderNormalizesSkillMCPInvocations() throws {
-    let fixture = try makeFixtureDatabase()
-    defer { try? FileManager.default.removeItem(at: fixture.tempRoot) }
-
-    let skillMCPJSON = "{\"type\":\"tool\",\"tool\":\"skill_mcp\",\"state\":{\"status\":\"completed\",\"input\":{\"mcp_name\":\"mem0-mcp\",\"tool_name\":\"search_memories\"},\"time\":{\"start\":2000,\"end\":2900}}}"
-    try fixture.connection.execute("INSERT INTO part VALUES ('1', 'msg1', 'ses1', 1700000000000, 1700000000000, '\(skillMCPJSON)');")
-
-    let reader = OpenCodeUsageReader(paths: fixture.paths)
-    let usages = try reader.loadObservedCapabilities(mcpServerNames: Set(["mem0-mcp"]))
-
     #expect(usages.count == 1)
-    #expect(usages.first?.usage.id == CapabilityID(kind: .mcpTool, namespace: "mem0-mcp", name: "search_memories"))
-    #expect(usages.first?.serverName == "mem0-mcp")
-}
-
-@Test
-func usageReaderIgnoresSkillMCPInvocationsForUnavailableServer() throws {
-    let fixture = try makeFixtureDatabase()
-    defer { try? FileManager.default.removeItem(at: fixture.tempRoot) }
-
-    let skillMCPJSON = "{\"type\":\"tool\",\"tool\":\"skill_mcp\",\"state\":{\"status\":\"completed\",\"input\":{\"mcp_name\":\"old-mcp\",\"tool_name\":\"search_memories\"},\"time\":{\"start\":2000,\"end\":2900}}}"
-    try fixture.connection.execute("INSERT INTO part VALUES ('1', 'msg1', 'ses1', 1700000000000, 1700000000000, '\(skillMCPJSON)');")
-
-    let reader = OpenCodeUsageReader(paths: fixture.paths)
-    let usages = try reader.loadObservedCapabilities(mcpServerNames: Set(["mem0-mcp"]))
-
-    #expect(usages.isEmpty)
-}
-
-@Test
-func usageReaderIgnoresUnconfiguredMcpLookingTools() throws {
-    let fixture = try makeFixtureDatabase()
-    defer { try? FileManager.default.removeItem(at: fixture.tempRoot) }
-
-    let unknownMCPJSON = "{\"type\":\"tool\",\"tool\":\"unknown-mcp_doThing\",\"state\":{\"status\":\"completed\",\"time\":{\"start\":2000,\"end\":2900}}}"
-    try fixture.connection.execute("INSERT INTO part VALUES ('1', 'msg1', 'ses1', 1700000000000, 1700000000000, '\(unknownMCPJSON)');")
-
-    let reader = OpenCodeUsageReader(paths: fixture.paths)
-    let usages = try reader.loadObservedCapabilities(mcpServerNames: Set(["mem0-mcp"]))
-
-    #expect(usages.isEmpty)
+    #expect(usages.first?.usage.usageCount == 1)
+    #expect(usages.first?.usage.successCount == 1)
+    #expect(usages.first?.usage.avgLatencyMs == 300)
 }
 
 @Test
@@ -128,8 +40,8 @@ func usageReaderFiltersObservedCapabilitiesByCutoffDate() throws {
     let reader = OpenCodeUsageReader(paths: fixture.paths)
     let cutoffDate = Date(timeIntervalSince1970: 1_702_000_000)
 
-    let allTimeUsages = try reader.loadObservedCapabilities(mcpServerNames: Set<String>())
-    let cutoffUsages = try reader.loadObservedCapabilities(mcpServerNames: Set<String>(), since: cutoffDate)
+    let allTimeUsages = try reader.loadObservedCapabilities()
+    let cutoffUsages = try reader.loadObservedCapabilities(since: cutoffDate)
 
     #expect(allTimeUsages.count == 1)
     #expect(allTimeUsages.first?.usage.usageCount == 2)
@@ -160,7 +72,7 @@ func usageReaderFailsClearlyWhenPartTableIsMissing() throws {
     let reader = OpenCodeUsageReader(paths: paths)
 
     #expect(throws: OpenCodeDataError.self) {
-        try reader.loadObservedCapabilities(mcpServerNames: Set<String>())
+        try reader.loadObservedCapabilities()
     }
 }
 

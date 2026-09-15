@@ -25,9 +25,11 @@ func supportReportRoundTripsThroughJSON() throws {
 
     #expect(decoded.reportVersion == GlanceSupportReport.currentReportVersion)
     #expect(decoded.generatedAt == Date(timeIntervalSince1970: 0))
-    #expect(decoded.source.id == "gemini-local")
+    #expect(decoded.source.id == "antigravity-local")
     #expect(decoded.diagnostics.readiness == .ready)
-    #expect(decoded.diagnostics.artifacts.map(\.label) == ["Settings", "Sessions"])
+    #expect(decoded.diagnostics.artifacts.map(\.label) == ["Application skills", "IDE skills"])
+    #expect(decoded.diagnostics.usageSupport == .inventoryOnly)
+    #expect(!decoded.diagnostics.supportsRollingWindows)
     #expect(decoded.selectedWindow == .day7)
     #expect(decoded.policy == RankingPolicy.default)
 }
@@ -54,7 +56,6 @@ func supportReportFiltersEnvironmentToAllowListOnly() {
     ])
 
     #expect(filtered == [
-        "GLANCE_GEMINI_EXECUTABLE": "/opt/homebrew/bin/gemini",
         "GLANCE_SPARKLE_FEED_URL": "https://updates.example.org",
     ])
 }
@@ -76,23 +77,24 @@ private func makeSupportReport() -> GlanceSupportReport {
         app: .init(name: "Glance", version: "1.0.0", bundleIdentifier: "com.example.Glance"),
         system: .init(operatingSystemVersion: "macOS 14.0", localeIdentifier: "en_US", timeZoneIdentifier: "Asia/Shanghai"),
         environment: GlanceSupportReport.filteredEnvironment([
-            "GLANCE_GEMINI_EXECUTABLE": "/opt/homebrew/bin/gemini",
+            "GLANCE_SPARKLE_FEED_URL": "https://updates.example.org/appcast.xml",
             "PATH": "/usr/bin:/bin",
         ]),
-        source: GlanceSources.geminiCLILocal,
+        source: GlanceSources.antigravityLocal,
         diagnostics: GlanceSourceDiagnostics(
             readiness: .ready,
-            supportsRollingWindows: true,
+            supportsRollingWindows: false,
             artifacts: [
-                GlanceSourceArtifact(label: "Settings", kind: .file, displayPath: "~/.gemini/settings.json", isPresent: true),
-                GlanceSourceArtifact(label: "Sessions", kind: .directory, displayPath: "~/.gemini/tmp", isPresent: true),
+                GlanceSourceArtifact(label: "Application skills", kind: .directory, displayPath: "~/.gemini/config/skills", isPresent: true),
+                GlanceSourceArtifact(label: "IDE skills", kind: .directory, displayPath: "~/.gemini/antigravity/skills", isPresent: true),
             ],
-            summary: "Gemini data is available."
+            summary: "Global Antigravity skill definitions only.",
+            usageSupport: .inventoryOnly
         ),
         selectedWindow: .day7,
         policy: .default,
         lastRefreshAt: Date(timeIntervalSince1970: 60),
         errorMessage: nil,
-        noticeMessage: "Some Gemini sessions were skipped"
+        noticeMessage: "Usage statistics are not available"
     )
 }

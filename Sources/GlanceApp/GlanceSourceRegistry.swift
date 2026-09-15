@@ -1,8 +1,9 @@
 import Foundation
 import GlanceClaude
 import GlanceCodex
+import GlanceDevin
 import GlanceCore
-import GlanceGemini
+import GlanceAntigravity
 import GlanceOpenCode
 
 protocol GlanceSourceResolving {
@@ -14,6 +15,9 @@ protocol GlanceSourceResolving {
 }
 
 struct LiveGlanceSourceRegistry: GlanceSourceResolving {
+    var devinPaths: DevinPaths = .live
+    var antigravityPaths: AntigravityPaths = .live
+
     var availableSources: [GlanceSource] {
         GlanceSources.all
     }
@@ -26,8 +30,10 @@ struct LiveGlanceSourceRegistry: GlanceSourceResolving {
             return CodexUsageRepository()
         case GlanceSources.claudeCodeLocal.id:
             return ClaudeUsageRepository()
-        case GlanceSources.geminiCLILocal.id:
-            return GeminiUsageRepository()
+        case GlanceSources.antigravityLocal.id:
+            return AntigravityInventoryRepository(paths: antigravityPaths)
+        case GlanceSources.devinCLILocal.id:
+            return DevinInventoryRepository(paths: devinPaths)
         default:
             return EmptyCapabilityRepository()
         }
@@ -39,15 +45,16 @@ struct LiveGlanceSourceRegistry: GlanceSourceResolving {
             let paths = OpenCodePaths.live
             return [
                 abbreviated(paths.databaseURL.path),
-                abbreviated(paths.opencodeConfigURL.path),
                 abbreviated(paths.skillsDirectory.path),
             ]
         case GlanceSources.claudeCodeLocal.id:
             return ClaudeConfigLoader().existingPaths()
         case GlanceSources.codexLocal.id:
             return CodexConfigLoader().existingPaths()
-        case GlanceSources.geminiCLILocal.id:
-            return GeminiConfigLoader().existingPaths()
+        case GlanceSources.antigravityLocal.id:
+            return antigravityPaths.skillDirectories.map { abbreviated($0.path) }
+        case GlanceSources.devinCLILocal.id:
+            return devinPaths.skillDirectories.map { abbreviated($0.path) }
         default:
             return []
         }
@@ -59,8 +66,6 @@ struct LiveGlanceSourceRegistry: GlanceSourceResolving {
             let paths = OpenCodePaths.live
             let artifacts = [
                 artifact(label: "Database", kind: .file, path: paths.databaseURL.path),
-                artifact(label: "Config", kind: .file, path: paths.opencodeConfigURL.path),
-                artifact(label: "Logs", kind: .directory, path: paths.logDirectory.path),
                 artifact(label: "Skills", kind: .directory, path: paths.skillsDirectory.path),
             ]
             let ready = artifacts.first(where: { $0.label == "Database" })?.isPresent == true
@@ -74,8 +79,6 @@ struct LiveGlanceSourceRegistry: GlanceSourceResolving {
             let paths = ClaudePaths.live
             let artifacts = [
                 artifact(label: "Transcripts", kind: .directory, path: paths.transcriptsDirectory.path),
-                artifact(label: "Global config", kind: .file, path: paths.globalConfigCandidates[0].path),
-                artifact(label: "Settings", kind: .file, path: paths.globalConfigCandidates[1].path),
                 artifact(label: "Skills", kind: .directory, path: paths.globalSkillsDirectory.path),
             ]
             let ready = artifacts.contains(where: \.isPresent)
@@ -83,7 +86,7 @@ struct LiveGlanceSourceRegistry: GlanceSourceResolving {
                 readiness: ready ? .ready : .needsSetup,
                 supportsRollingWindows: true,
                 artifacts: artifacts,
-                summary: ready ? "Claude Code local data is available." : "Claude Code needs transcripts or config under ~/.claude before Glance can show current data."
+                summary: ready ? "Claude Code local data is available." : "Claude Code needs transcripts or skills under ~/.claude before Glance can show current data."
             )
         case GlanceSources.codexLocal.id:
             let paths = CodexPaths.live
@@ -101,39 +104,34 @@ struct LiveGlanceSourceRegistry: GlanceSourceResolving {
                 artifacts: artifacts,
                 summary: ready ? "Codex local data is available." : "Codex needs local sessions or skills under ~/.codex before Glance can show current data."
             )
-        case GlanceSources.geminiCLILocal.id:
-            let paths = GeminiPaths.live
-            let locator = GeminiExecutableLocator()
-            let commandArtifact = GlanceSourceArtifact(
-                label: "Gemini",
-                kind: .command,
-                displayPath: abbreviated(locator.executableURL()?.path ?? "gemini"),
-                isPresent: locator.isInstalled()
-            )
+        case GlanceSources.antigravityLocal.id:
             let artifacts = [
-                commandArtifact,
-                artifact(label: "Settings", kind: .file, path: paths.settingsURL.path),
-                artifact(label: "Projects", kind: .file, path: paths.projectsURL.path),
-                artifact(label: "History", kind: .directory, path: paths.historyDirectory.path),
-                artifact(label: "Sessions", kind: .directory, path: paths.tmpDirectory.path),
+                artifact(label: "Application skills", kind: .directory, path: antigravityPaths.applicationSkillsDirectory.path),
+                artifact(label: "IDE skills", kind: .directory, path: antigravityPaths.ideSkillsDirectory.path),
             ]
-            let readiness: GlanceSourceReadiness
-            let summary: String
-            if !commandArtifact.isPresent {
-                readiness = .unavailable
-                summary = "Gemini was not found in standard locations. Set GLANCE_GEMINI_EXECUTABLE if needed."
-            } else if artifacts.contains(where: { $0.label == "Sessions" && $0.isPresent }) || artifacts.contains(where: { $0.label == "Settings" && $0.isPresent }) {
-                readiness = .ready
-                summary = "Gemini data is available."
-            } else {
-                readiness = .needsSetup
-                summary = "Gemini is installed, but Glance needs local settings or session data under ~/.gemini."
-            }
+            // A broken or inaccessible root must reach the loader to report an incomplete
+            // inventory, rather than being mistaken for a confirmed empty setup.
+            let ready = antigravityPaths.skillDirectories.contains(where: shouldInspectInventoryDirectory)
             return GlanceSourceDiagnostics(
-                readiness: readiness,
-                supportsRollingWindows: true,
+                readiness: ready ? .ready : .needsSetup,
+                supportsRollingWindows: false,
                 artifacts: artifacts,
-                summary: summary
+                summary: ready ? AntigravityInventoryRepository.scopeNotice
+                    : "No global Antigravity skill directories found. Add a SKILL.md bundle under ~/.gemini/config/skills or ~/.gemini/antigravity/skills. Usage statistics are not supported yet.",
+                usageSupport: .inventoryOnly
+            )
+        case GlanceSources.devinCLILocal.id:
+            let artifacts = devinPaths.skillDirectories.map {
+                artifact(label: "Skill definitions", kind: .directory, path: $0.path)
+            }
+            let ready = artifacts.contains(where: \.isPresent)
+            return GlanceSourceDiagnostics(
+                readiness: ready ? .ready : .needsSetup,
+                supportsRollingWindows: false,
+                artifacts: artifacts,
+                summary: ready ? DevinInventoryRepository.scopeNotice
+                    : "No global Devin CLI skill directories found. Add a skill under ~/.config/devin/skills or ~/.agents/skills. Usage statistics are not supported yet.",
+                usageSupport: .inventoryOnly
             )
         default:
             return GlanceSourceDiagnostics(
@@ -179,16 +177,10 @@ struct LiveGlanceSourceRegistry: GlanceSourceResolving {
                 }
             }
             return "Glance could not load Codex right now."
-        case GlanceSources.geminiCLILocal.id:
-            if let error = error as? GeminiDataError {
-                switch error {
-                case .commandFailed:
-                    return "Gemini did not return the expected inventory output. Run 'gemini skills list --all' and 'gemini mcp list' manually, or set GLANCE_GEMINI_EXECUTABLE to the correct binary path."
-                case .invalidSession:
-                    return "A Gemini session file could not be read. Glance skips malformed sessions, but Gemini's local format may have changed."
-                }
-            }
-            return "Glance could not load Gemini right now."
+        case GlanceSources.antigravityLocal.id:
+            return "Glance could not inspect Antigravity skill definitions. Check the directories in Settings."
+        case GlanceSources.devinCLILocal.id:
+            return "Glance could not inspect Devin CLI skill definitions. Check the directories in Settings."
         default:
             return "This source is not supported by the current Glance build."
         }
@@ -196,6 +188,17 @@ struct LiveGlanceSourceRegistry: GlanceSourceResolving {
 
     private func abbreviated(_ path: String) -> String {
         (path as NSString).abbreviatingWithTildeInPath
+    }
+
+    private func shouldInspectInventoryDirectory(_ url: URL) -> Bool {
+        do {
+            _ = try FileManager.default.attributesOfItem(atPath: url.path)
+            return true
+        } catch {
+            let error = error as NSError
+            return !(error.domain == NSCocoaErrorDomain
+                && [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(error.code))
+        }
     }
 
     private func artifact(label: String, kind: GlanceSourceArtifactKind, path: String) -> GlanceSourceArtifact {

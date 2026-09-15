@@ -2,8 +2,6 @@ import Foundation
 
 public enum CapabilityKind: String, Codable, CaseIterable, Sendable {
     case skill
-    case mcpTool
-    case mcpServer
 }
 
 public struct CapabilityID: Hashable, Codable, Identifiable, Sendable {
@@ -26,14 +24,7 @@ public struct CapabilityID: Hashable, Codable, Identifiable, Sendable {
     }
 
     public var displayName: String {
-        switch kind {
-        case .skill:
-            return name
-        case .mcpTool:
-            return namespace.isEmpty ? name : "\(namespace).\(name)"
-        case .mcpServer:
-            return namespace.isEmpty ? name : namespace
-        }
+        name
     }
 }
 
@@ -121,8 +112,6 @@ public struct RankingSnapshot: Sendable {
     public let window: RollingWindow?
     public let allCapabilities: [CapabilityUsage]
     public let skills: [CapabilityUsage]
-    public let mcpTools: [CapabilityUsage]
-    public let mcpServers: [CapabilityUsage]
     public let stale: [CapabilityUsage]
     public let removalCandidates: [CapabilityUsage]
 
@@ -130,8 +119,6 @@ public struct RankingSnapshot: Sendable {
         generatedAt: Date,
         allCapabilities: [CapabilityUsage],
         skills: [CapabilityUsage],
-        mcpTools: [CapabilityUsage],
-        mcpServers: [CapabilityUsage],
         stale: [CapabilityUsage],
         removalCandidates: [CapabilityUsage],
         evidence: UsageEvidence = UsageEvidence(),
@@ -144,8 +131,6 @@ public struct RankingSnapshot: Sendable {
         self.window = window
         self.allCapabilities = allCapabilities
         self.skills = skills
-        self.mcpTools = mcpTools
-        self.mcpServers = mcpServers
         self.stale = stale
         self.removalCandidates = removalCandidates
     }
@@ -154,8 +139,6 @@ public struct RankingSnapshot: Sendable {
         generatedAt: .distantPast,
         allCapabilities: [],
         skills: [],
-        mcpTools: [],
-        mcpServers: [],
         stale: [],
         removalCandidates: []
     )

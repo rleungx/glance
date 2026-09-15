@@ -13,8 +13,6 @@ struct GlanceSource: Identifiable, Hashable, Codable {
             return "codex"
         case "claude-local":
             return "claude-code"
-        case "gemini-local":
-            return "gemini-cli"
         default:
             return nil
         }
@@ -28,8 +26,10 @@ struct GlanceSource: Identifiable, Hashable, Codable {
             return "circle.hexagongrid"
         case "claude-local":
             return "quote.bubble"
-        case "gemini-local":
-            return "diamond"
+        case "antigravity-local":
+            return "sparkles"
+        case "devin-local":
+            return "terminal"
         default:
             return "square.stack.3d.up"
         }
@@ -55,12 +55,18 @@ enum GlanceSources {
         detail: "Current local source"
     )
 
-    static let geminiCLILocal = GlanceSource(
-        id: "gemini-local",
-        displayName: "Gemini",
-        detail: "Current local source"
+    static let antigravityLocal = GlanceSource(
+        id: "antigravity-local",
+        displayName: "Antigravity",
+        detail: "Skill inventory only · App & IDE"
     )
 
-    static let all: [GlanceSource] = [openCodeLocal, codexLocal, claudeCodeLocal, geminiCLILocal]
+    static let devinCLILocal = GlanceSource(
+        id: "devin-local",
+        displayName: "Devin CLI",
+        detail: "Skill inventory only · Includes Fusion"
+    )
+
+    static let all: [GlanceSource] = [openCodeLocal, codexLocal, claudeCodeLocal, antigravityLocal, devinCLILocal]
     static let `default`: GlanceSource = openCodeLocal
 }

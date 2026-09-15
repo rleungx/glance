@@ -45,12 +45,18 @@ final class GlanceStore: ObservableObject {
             availableWindows: RollingWindow.displayCases,
             selectedWindowRawValue: windowSelectionStore.loadSelectedWindowRawValue()
         )
+        let savedSourceID = selectionStore.loadSelectedSourceID()
         let initialSource = GlanceStore.resolveInitialSource(
             availableSources: sourceRegistry.availableSources,
-            selectedSourceID: selectionStore.loadSelectedSourceID()
+            selectedSourceID: savedSourceID
         )
         self.currentSource = initialSource
         self.repository = sourceRegistry.makeRepository(for: initialSource)
+
+        // Migrate the retired source selection, never its usage history or skill data.
+        if savedSourceID == "gemini-local", initialSource.id == GlanceSources.antigravityLocal.id {
+            selectionStore.saveSelectedSourceID(initialSource.id)
+        }
 
         if startRefreshLoop {
             refreshTask = Task { [weak self] in
@@ -77,10 +83,11 @@ final class GlanceStore: ObservableObject {
 
     var summaryLine: String {
         let snapshot = activeSnapshot
+        if isInventoryOnly { return "\(snapshot.skills.count) skill definitions · usage unavailable" }
         let history = staleSnapshot
         let covered = history.evidence.covers(since: history.generatedAt.addingTimeInterval(-Double(max(policy.staleAfterDays, policy.removalAfterDays)) * 86_400), through: history.generatedAt)
         let cleanup = covered && errorMessage == nil ? "\(visibleStale.count) stale" : "cleanup paused"
-        return "\(snapshot.skills.count) skills · \(snapshot.mcpServers.count) MCPs · \(cleanup)"
+        return "\(snapshot.skills.count) skills · \(cleanup)"
     }
 
     var availableSources: [GlanceSource] {
@@ -100,19 +107,20 @@ final class GlanceStore: ObservableObject {
     }
 
     var effectiveWindowLabel: String {
-        currentDiagnostics.supportsRollingWindows ? selectedWindow.title : "All time"
+        if isInventoryOnly { return "Inventory" }
+        return currentDiagnostics.supportsRollingWindows ? selectedWindow.title : "All time"
     }
 
-    var topMCPs: [CapabilityUsage] {
-        activeSnapshot.mcpServers
+    var isInventoryOnly: Bool {
+        currentDiagnostics.usageSupport == .inventoryOnly
     }
 
     var visibleStale: [CapabilityUsage] {
-        errorMessage == nil ? staleSnapshot.stale.filter { $0.id.kind != .mcpTool } : []
+        errorMessage == nil && !isInventoryOnly ? staleSnapshot.stale : []
     }
 
     var visibleRemovalCandidates: [CapabilityUsage] {
-        errorMessage == nil ? staleSnapshot.removalCandidates.filter { $0.id.kind != .mcpTool } : []
+        errorMessage == nil && !isInventoryOnly ? staleSnapshot.removalCandidates : []
     }
 
     var activeSnapshot: RankingSnapshot {
@@ -271,7 +279,8 @@ final class GlanceStore: ObservableObject {
             var evidence = UsageEvidence()
             var warning: String?
             if let evidenceRepository = requestedRepository as? any EvidenceReportingRepository {
-                let result = try await evidenceRepository.loadUsage(windows: Array(Set([selectedWindow, cleanupWindow])), now: now)
+                let windows = diagnostics.supportsRollingWindows ? Array(Set([selectedWindow, cleanupWindow])) : [.allTime]
+                let result = try await evidenceRepository.loadUsage(windows: windows, now: now)
                 capabilitiesByWindow = result.windows
                 evidence = result.evidence
                 warning = ([evidence.summary] + result.warnings.filter { $0 != evidence.summary }).joined(separator: "\n")
@@ -309,6 +318,10 @@ final class GlanceStore: ObservableObject {
         availableSources: [GlanceSource],
         selectedSourceID: String?
     ) -> GlanceSource {
+        if selectedSourceID == "gemini-local",
+           let replacement = availableSources.first(where: { $0.id == GlanceSources.antigravityLocal.id }) {
+            return replacement
+        }
         if let selectedSourceID,
            let source = availableSources.first(where: { $0.id == selectedSourceID }) {
             return source

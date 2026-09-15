@@ -1,16 +1,6 @@
 import Foundation
 import GlanceCore
 
-public struct ClaudeConfiguredMCPServer: Hashable, Sendable {
-    public let name: String
-    public let enabled: Bool
-
-    public init(name: String, enabled: Bool) {
-        self.name = name
-        self.enabled = enabled
-    }
-}
-
 public struct ClaudeInstalledSkill: Hashable, Sendable {
     public let name: String
     public let directory: URL

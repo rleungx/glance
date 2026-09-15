@@ -28,57 +28,38 @@ public struct CodexTranscriptUsageReader {
                     }
                     if type == "message", payload["role"] as? String == nil { evidence.skippedRecords += 1; continue }
                     let isUserMessage = type == "message" && payload["role"] as? String == "user"
-                    let isCall = ["function_call", "custom_tool_call"].contains(type)
-                    guard isUserMessage || isCall else { continue }
+                    guard isUserMessage else { continue }
                     guard let rawTimestamp = object["timestamp"] as? String,
                           let timestamp = fractional.date(from: rawTimestamp) ?? plain.date(from: rawTimestamp) else {
                         evidence.skippedRecords += 1; continue
                     }
                     let reference = UsageRecordReference(file: file.path, record: "line \(lineIndex + 1)")
-                    if isUserMessage {
-                        guard let content = payload["content"] as? [Any] else { evidence.skippedRecords += 1; continue }
-                        for (contentIndex, rawBlock) in content.enumerated() {
-                            guard let block = rawBlock as? [String: Any] else { evidence.skippedRecords += 1; continue }
-                            guard let text = block["text"] as? String else {
-                                if block["type"] as? String == "input_text" { evidence.skippedRecords += 1 }
-                                continue
-                            }
-                            let names = skillNames(in: text)
-                            if text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<skill>"), names.isEmpty {
-                                evidence.skippedRecords += 1
-                            }
-                            for (index, name) in names.enumerated() {
-                                // Native instruction-message IDs are optional; copies retain timestamp and content.
-                                let nativeID = (payload["id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-                                let messageID = nativeID ?? UsageEventIdentity.fingerprint(["timestamp": rawTimestamp, "content": text])
-                                let id = "skill:\(messageID):\(contentIndex):\(index)"
-                                let fingerprint = UsageEventIdentity.fingerprint(["timestamp": rawTimestamp, "content": text])
-                                if let previous = seen[id] {
-                                    evidence.duplicates += 1
-                                    if previous != fingerprint { evidence.skippedRecords += 1 }
-                                    continue
-                                }
-                                seen[id] = fingerprint
-                                if nativeID == nil { evidence.inferredIdentities += 1 }
-                                events.append(CodexObservedToolEvent(timestamp: timestamp, skillName: name, reference: reference))
-                            }
-                        }
-                    } else {
-                        guard let rawName = payload["name"] as? String else { evidence.skippedRecords += 1; continue }
-                        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard name.hasPrefix("mcp__") else { continue }
-                        guard let parsed = parseFunctionName(name) else { evidence.skippedRecords += 1; continue }
-                        let nativeID = (payload["call_id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-                        let id = "tool:" + (nativeID ?? UsageEventIdentity.fingerprint(["timestamp": rawTimestamp, "payload": payload]))
-                        let fingerprint = UsageEventIdentity.fingerprint(["timestamp": rawTimestamp, "payload": payload])
-                        if let previous = seen[id] {
-                            evidence.duplicates += 1
-                            if previous != fingerprint { evidence.skippedRecords += 1 }
+                    guard let content = payload["content"] as? [Any] else { evidence.skippedRecords += 1; continue }
+                    for (contentIndex, rawBlock) in content.enumerated() {
+                        guard let block = rawBlock as? [String: Any] else { evidence.skippedRecords += 1; continue }
+                        guard let text = block["text"] as? String else {
+                            if block["type"] as? String == "input_text" { evidence.skippedRecords += 1 }
                             continue
                         }
-                        seen[id] = fingerprint
-                        if nativeID == nil { evidence.inferredIdentities += 1 }
-                        events.append(CodexObservedToolEvent(timestamp: timestamp, serverName: parsed.serverName, toolName: parsed.toolName, reference: reference))
+                        let names = skillNames(in: text)
+                        if text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<skill>"), names.isEmpty {
+                            evidence.skippedRecords += 1
+                        }
+                        for (index, name) in names.enumerated() {
+                            // Native instruction-message IDs are optional; copies retain timestamp and content.
+                            let nativeID = (payload["id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                            let messageID = nativeID ?? UsageEventIdentity.fingerprint(["timestamp": rawTimestamp, "content": text])
+                            let id = "skill:\(messageID):\(contentIndex):\(index)"
+                            let fingerprint = UsageEventIdentity.fingerprint(["timestamp": rawTimestamp, "content": text])
+                            if let previous = seen[id] {
+                                evidence.duplicates += 1
+                                if previous != fingerprint { evidence.skippedRecords += 1 }
+                                continue
+                            }
+                            seen[id] = fingerprint
+                            if nativeID == nil { evidence.inferredIdentities += 1 }
+                            events.append(CodexObservedToolEvent(timestamp: timestamp, skillName: name, reference: reference))
+                        }
                     }
                 }
             } catch { evidence.skippedFiles += 1 }
@@ -86,17 +67,6 @@ public struct CodexTranscriptUsageReader {
         evidence.finish(timestamps: events.map(\.timestamp))
         return CodexTranscriptLoadResult(events: events.filter { $0.timestamp >= cutoffDate },
             skippedFilesCount: evidence.skippedFiles, skippedEntriesCount: evidence.skippedRecords, evidence: evidence)
-    }
-
-    private func parseFunctionName(_ rawName: String) -> (serverName: String, toolName: String)? {
-        let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix("mcp__") else { return nil }
-        let remainder = String(trimmed.dropFirst(5))
-        guard let split = remainder.range(of: "__") else { return nil }
-        let server = String(remainder[..<split.lowerBound]).lowercased()
-        let tool = String(remainder[split.upperBound...]).lowercased()
-        guard !server.isEmpty, !tool.isEmpty else { return nil }
-        return (server, tool)
     }
 
     private func skillNames(in text: String) -> [String] {

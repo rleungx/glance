@@ -11,23 +11,11 @@ public struct InstalledSkill: Hashable, Sendable {
     }
 }
 
-public struct ConfiguredMCPServer: Hashable, Sendable {
-    public let name: String
-    public let enabled: Bool
-
-    public init(name: String, enabled: Bool) {
-        self.name = name
-        self.enabled = enabled
-    }
-}
-
 public struct ObservedCapabilityUsage: Sendable {
     public let usage: CapabilityUsage
-    public let serverName: String?
 
-    public init(usage: CapabilityUsage, serverName: String? = nil) {
+    public init(usage: CapabilityUsage) {
         self.usage = usage
-        self.serverName = serverName
     }
 }
 

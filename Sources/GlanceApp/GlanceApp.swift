@@ -47,11 +47,6 @@ struct GlanceAppMain: App {
                 Button("Settings…") {
                     NSApp.activate(ignoringOtherApps: true)
                     openWindow(id: Self.settingsWindowID)
-                    DispatchQueue.main.async {
-                        NSApp.windows
-                            .first(where: { $0.identifier?.rawValue == Self.settingsWindowID || $0.title == "Settings" })?
-                            .center()
-                    }
                 }
                 .keyboardShortcut(",")
             }
@@ -60,5 +55,7 @@ struct GlanceAppMain: App {
         Window("Settings", id: Self.settingsWindowID) {
             GlanceSettingsView(store: store, updater: updater)
         }
+        .defaultSize(width: 600, height: 540)
+        .windowResizability(.contentMinSize)
     }
 }

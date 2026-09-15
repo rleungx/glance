@@ -47,7 +47,7 @@ func staleAndRemovalClassificationUsePolicyThresholds() {
 @Test
 func installedButUnusedCapabilitiesRequireVerifiedCoverage() {
     let unused = CapabilityUsage(
-        id: CapabilityID(kind: .mcpServer, namespace: "mem0-mcp", name: "mem0-mcp"),
+        id: CapabilityID(kind: .skill, name: "unused-skill"),
         usageCount: 0,
         installedButUnused: true
     )
@@ -66,16 +66,12 @@ func snapshotCategoryOrderingMatchesDirectSortedResults() {
     let capabilities = [
         CapabilityUsage(id: CapabilityID(kind: .skill, name: "beta"), usageCount: 2, firstUsedAt: now.addingTimeInterval(-20_000), lastUsedAt: now.addingTimeInterval(-10_000), successCount: 2),
         CapabilityUsage(id: CapabilityID(kind: .skill, name: "alpha"), usageCount: 5, firstUsedAt: now.addingTimeInterval(-30_000), lastUsedAt: now.addingTimeInterval(-5_000), successCount: 5),
-        CapabilityUsage(id: CapabilityID(kind: .mcpServer, namespace: "mem0-mcp", name: "mem0-mcp"), usageCount: 1, firstUsedAt: now.addingTimeInterval(-4_000), lastUsedAt: now.addingTimeInterval(-4_000), successCount: 1),
-        CapabilityUsage(id: CapabilityID(kind: .mcpTool, namespace: "mem0-mcp", name: "get_memories"), usageCount: 1, firstUsedAt: now.addingTimeInterval(-4_000), lastUsedAt: now.addingTimeInterval(-4_000), successCount: 1),
         CapabilityUsage(id: CapabilityID(kind: .skill, name: "unused"), usageCount: 0, installedButUnused: true),
     ]
 
     let snapshot = CapabilityRanker.buildSnapshot(from: capabilities, now: now)
 
     #expect(snapshot.skills.map(\.id.id) == CapabilityRanker.sorted(capabilities.filter { $0.id.kind == .skill }, now: now).map(\.id.id))
-    #expect(snapshot.mcpServers.map(\.id.id) == CapabilityRanker.sorted(capabilities.filter { $0.id.kind == .mcpServer }, now: now).map(\.id.id))
-    #expect(snapshot.mcpTools.map(\.id.id) == CapabilityRanker.sorted(capabilities.filter { $0.id.kind == .mcpTool }, now: now).map(\.id.id))
     #expect(snapshot.stale.map(\.id.id) == CapabilityRanker.sorted(capabilities.filter { CapabilityRanker.isStale($0, now: now) }, now: now).map(\.id.id))
     #expect(snapshot.removalCandidates.map(\.id.id) == CapabilityRanker.sorted(capabilities.filter { CapabilityRanker.isRemovalCandidate($0, now: now) }, now: now).map(\.id.id))
 }

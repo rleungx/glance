@@ -107,7 +107,7 @@ struct GlanceSupportReport: Codable, Equatable {
     }
 
     static func filteredEnvironment(_ environment: [String: String]) -> [String: String] {
-        let allowedKeys = ["GLANCE_GEMINI_EXECUTABLE", "GLANCE_SPARKLE_FEED_URL"]
+        let allowedKeys = ["GLANCE_SPARKLE_FEED_URL"]
         return allowedKeys.reduce(into: [String: String]()) { partialResult, key in
             guard let value = environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
                 return

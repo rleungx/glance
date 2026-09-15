@@ -75,25 +75,23 @@ public final class ClaudeTranscriptUsageReader {
                 blocks = content
             } else if type == "tool_use" {
                 guard let name = object["tool_name"] as? String else { skipped += 1; continue }
-                blocks = [["type": "tool_use", "name": name]]
+                blocks = [["type": "tool_use", "name": name, "input": object["input"] ?? [:]]]
             } else { continue }
 
             for (index, rawBlock) in blocks.enumerated() {
                 guard let block = rawBlock as? [String: Any], let blockType = block["type"] as? String else { skipped += 1; continue }
                 guard blockType == "tool_use" else { continue }
-                guard let name = block["name"] as? String, !name.isEmpty,
-                      let rawTimestamp = object["timestamp"] as? String,
+                guard let name = block["name"] as? String, !name.isEmpty else { skipped += 1; continue }
+                guard name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "skill" else { continue }
+                guard let rawTimestamp = object["timestamp"] as? String,
                       let timestamp = fractionalFormatter.date(from: rawTimestamp) ?? plainFormatter.date(from: rawTimestamp) else {
                     skipped += 1; continue
                 }
-                var skillName: String?
-                if name.lowercased() == "skill" {
-                    guard let input = block["input"] as? [String: Any],
-                          let skill = input["skill"] as? String, !skill.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                        skipped += 1; continue
-                    }
-                    skillName = skill
+                guard let input = block["input"] as? [String: Any],
+                      let skill = input["skill"] as? String, !skill.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    skipped += 1; continue
                 }
+                let skillName = skill.trimmingCharacters(in: .whitespacesAndNewlines)
                 let nativeID = (block["id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
                 let id = nativeID ?? UsageEventIdentity.fingerprint(["timestamp": rawTimestamp, "block": block, "index": index])
                 events.append(ClaudeObservedToolEvent(timestamp: timestamp, toolName: name, skillName: skillName,

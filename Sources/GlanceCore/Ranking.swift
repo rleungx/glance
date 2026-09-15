@@ -11,9 +11,7 @@ public enum CapabilityRanker {
     ) -> RankingSnapshot {
         let scoreByCapability = makeScoreLookup(for: capabilities, policy: policy, now: now)
         let allCapabilities = sorted(capabilities, scoreByCapability: scoreByCapability)
-        let skills = allCapabilities.filter { $0.id.kind == .skill }
-        let mcpTools = allCapabilities.filter { $0.id.kind == .mcpTool }
-        let mcpServers = allCapabilities.filter { $0.id.kind == .mcpServer }
+        let skills = allCapabilities
         let stale = sorted(capabilities.filter { isStale($0, policy: policy, now: now, evidence: evidence) }, scoreByCapability: scoreByCapability)
         let removalCandidates = sorted(capabilities.filter { isRemovalCandidate($0, policy: policy, now: now, evidence: evidence) }, scoreByCapability: scoreByCapability)
 
@@ -21,8 +19,6 @@ public enum CapabilityRanker {
             generatedAt: now,
             allCapabilities: allCapabilities,
             skills: skills,
-            mcpTools: mcpTools,
-            mcpServers: mcpServers,
             stale: stale,
             removalCandidates: removalCandidates,
             evidence: evidence,

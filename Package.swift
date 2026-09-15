@@ -11,8 +11,9 @@ let package = Package(
         .library(name: "GlanceCore", targets: ["GlanceCore"]),
         .library(name: "GlanceOpenCode", targets: ["GlanceOpenCode"]),
         .library(name: "GlanceClaude", targets: ["GlanceClaude"]),
-        .library(name: "GlanceGemini", targets: ["GlanceGemini"]),
+        .library(name: "GlanceAntigravity", targets: ["GlanceAntigravity"]),
         .library(name: "GlanceCodex", targets: ["GlanceCodex"]),
+        .library(name: "GlanceDevin", targets: ["GlanceDevin"]),
         .executable(name: "GlanceApp", targets: ["GlanceApp"]),
     ],
     dependencies: [
@@ -28,16 +29,18 @@ let package = Package(
             ]
         ),
         .target(name: "GlanceClaude", dependencies: ["GlanceCore"]),
-        .target(name: "GlanceGemini", dependencies: ["GlanceCore"]),
+        .target(name: "GlanceAntigravity", dependencies: ["GlanceCore"]),
         .target(name: "GlanceCodex", dependencies: ["GlanceCore"]),
+        .target(name: "GlanceDevin", dependencies: ["GlanceCore"]),
         .executableTarget(
             name: "GlanceApp",
             dependencies: [
                 "GlanceCore",
                 "GlanceOpenCode",
                 "GlanceClaude",
-                "GlanceGemini",
+                "GlanceAntigravity",
                 "GlanceCodex",
+                "GlanceDevin",
                 .product(name: "Sparkle", package: "Sparkle"),
             ],
             resources: [
@@ -54,19 +57,23 @@ let package = Package(
         ),
         .testTarget(
             name: "GlanceAppTests",
-            dependencies: ["GlanceApp", "GlanceCore", "GlanceOpenCode"]
+            dependencies: ["GlanceApp", "GlanceCore", "GlanceOpenCode", "GlanceDevin", "GlanceAntigravity"]
         ),
         .testTarget(
             name: "GlanceClaudeTests",
             dependencies: ["GlanceClaude", "GlanceCore"]
         ),
         .testTarget(
-            name: "GlanceGeminiTests",
-            dependencies: ["GlanceGemini", "GlanceCore"]
+            name: "GlanceAntigravityTests",
+            dependencies: ["GlanceAntigravity", "GlanceCore"]
         ),
         .testTarget(
             name: "GlanceCodexTests",
             dependencies: ["GlanceCodex", "GlanceCore"]
+        ),
+        .testTarget(
+            name: "GlanceDevinTests",
+            dependencies: ["GlanceDevin", "GlanceCore"]
         ),
     ]
 )

@@ -3,7 +3,7 @@ import Testing
 @testable import GlanceOpenCode
 
 @Test
-func configLoaderFindsInstalledSkillsAndEnabledMCPServers() throws {
+func configLoaderFindsInstalledSkillsWithoutReadingGlobalConfig() throws {
     let tempRoot = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: tempRoot) }
@@ -17,15 +17,7 @@ func configLoaderFindsInstalledSkillsAndEnabledMCPServers() throws {
     try FileManager.default.createDirectory(at: skillDirectory, withIntermediateDirectories: true)
     try "# Skill".write(to: skillDirectory.appending(path: "SKILL.md"), atomically: true, encoding: .utf8)
 
-    let configJSON = """
-    {
-      "mcp": {
-        "mem0-mcp": { "enabled": true },
-        "disabled-server": { "enabled": false }
-      }
-    }
-    """
-    try configJSON.write(to: configDirectory.appending(path: "opencode.json"), atomically: true, encoding: .utf8)
+    try "{invalid config".write(to: configDirectory.appending(path: "opencode.json"), atomically: true, encoding: .utf8)
 
     let paths = OpenCodePaths(
         homeDirectory: tempRoot,
@@ -36,8 +28,6 @@ func configLoaderFindsInstalledSkillsAndEnabledMCPServers() throws {
     let loader = OpenCodeConfigLoader(paths: paths)
 
     let skills = try loader.loadInstalledSkills()
-    let mcpServers = try loader.loadConfiguredMCPServers()
 
     #expect(skills.map(\.name) == ["find-skills"])
-    #expect(mcpServers.map(\.name) == ["disabled-server", "mem0-mcp"])
 }

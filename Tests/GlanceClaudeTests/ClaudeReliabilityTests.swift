@@ -29,10 +29,10 @@ func claudeMalformedBlockPreservesSiblingCallsAndCachedWarning() throws {
     let reader = ClaudeTranscriptUsageReader(paths: paths)
     for _ in 0..<2 {
         let result = try reader.loadObservedEvents(since: .distantPast)
-        #expect(result.events.count == 2)
+        #expect(result.events.count == 1)
         #expect(result.evidence.skippedRecords == 1)
         #expect(result.evidence.completeness == .partial)
-        #expect(result.events.first?.reference?.record == "line 1, block 1")
+        #expect(result.events.first?.reference?.record == "line 1, block 3")
     }
 }
 
@@ -43,18 +43,18 @@ func claudeDetectsRewritesWithUnchangedMetadataAndDeduplicatesCopies() throws {
     let paths = ClaudePaths(homeDirectory: root)
     try FileManager.default.createDirectory(at: paths.transcriptsDirectory, withIntermediateDirectories: true)
     let file = paths.transcriptsDirectory.appendingPathComponent("session.jsonl")
-    let original = #"{"type":"assistant","timestamp":"2026-04-01T12:00:00Z","message":{"content":[{"type":"tool_use","id":"a","name":"mcp__docs__first","input":{}}]}}"#
+    let original = #"{"type":"assistant","timestamp":"2026-04-01T12:00:00Z","message":{"content":[{"type":"tool_use","id":"a","name":"Skill","input":{"skill":"first"}}]}}"#
     try original.write(to: file, atomically: true, encoding: .utf8)
     let mtime = try FileManager.default.attributesOfItem(atPath: file.path)[.modificationDate] as! Date
     let reader = ClaudeTranscriptUsageReader(paths: paths)
-    #expect(try reader.loadObservedEvents(since: .distantPast).events.first?.toolName == "mcp__docs__first")
+    #expect(try reader.loadObservedEvents(since: .distantPast).events.first?.skillName == "first")
     let updated = original.replacingOccurrences(of: "first", with: "other")
     try updated.write(to: file, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.modificationDate: mtime], ofItemAtPath: file.path)
     try updated.write(to: paths.transcriptsDirectory.appendingPathComponent("copy.jsonl"), atomically: true, encoding: .utf8)
     let result = try reader.loadObservedEvents(since: .distantPast)
     #expect(result.events.count == 1)
-    #expect(result.events.first?.toolName == "mcp__docs__other")
+    #expect(result.events.first?.skillName == "other")
     #expect(result.evidence.duplicates == 1)
     try original.write(to: paths.transcriptsDirectory.appendingPathComponent("conflicting.jsonl"), atomically: true, encoding: .utf8)
     let conflict = try reader.loadObservedEvents(since: .distantPast)

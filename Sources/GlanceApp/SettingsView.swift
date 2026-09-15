@@ -10,252 +10,238 @@ struct GlanceSettingsView: View {
     private let appMetadata = GlanceAppMetadata()
     @State private var supportStatus: String?
     @State private var supportStatusIsError = false
+    @State private var showsDataDetails = false
+    @State private var showsCleanupOptions = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Metrics.sectionSpacing) {
-                currentSourceSection
-                overviewSection
-                sourcePathsSection
-                supportSection
-                aboutSection
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(Metrics.outerPadding)
+        TabView {
+            generalSettings
+                .tabItem { Label("General", systemImage: "gearshape") }
+
+            sourceSettings
+                .tabItem { Label("Sources", systemImage: "square.stack.3d.up") }
+
+            aboutSettings
+                .tabItem { Label("About", systemImage: "info.circle") }
         }
-        .frame(
-            minWidth: Metrics.windowMinWidth,
-            idealWidth: Metrics.windowIdealWidth,
-            minHeight: Metrics.windowMinHeight,
-            idealHeight: Metrics.windowIdealHeight,
-            alignment: .topLeading
-        )
-        .background(GlanceVisualStyle.canvas.ignoresSafeArea())
+        .padding(20)
+        .frame(minWidth: 560, idealWidth: 600, minHeight: 460, idealHeight: 540)
+        .background(GlanceVisualStyle.canvas)
     }
 
-    private var currentSourceSection: AnyView {
-        AnyView(settingsSection(
-            title: "Current Source",
-            detail: "Glance reads from the selected source in place and keeps the source read-only."
-        ) {
-            settingRow {
-                Picker("Source", selection: sourceSelection) {
+    private var generalSettings: some View {
+        Form {
+            Section {
+                Picker("Time range", selection: windowSelection) {
+                    ForEach(store.availableWindows) { window in
+                        Text(window == .day1 ? "Last 24 hours" : "Last \(window.rawValue) days")
+                            .tag(window)
+                    }
+                }
+
+                Stepper(value: refreshInterval, in: 60 ... 3_600, step: 60) {
+                    LabeledContent("Refresh every", value: refreshIntervalLabel)
+                }
+                .accessibilityValue(refreshIntervalLabel)
+            } header: {
+                Text("Activity")
+            } footer: {
+                Text("These preferences apply to all your assistants. You can also change the time range from the menu bar.")
+            }
+
+            Section {
+                DisclosureGroup("Cleanup suggestions", isExpanded: $showsCleanupOptions) {
+                    Stepper(value: staleThreshold, in: 1 ... 90) {
+                        LabeledContent("Mark inactive after", value: "\(store.policy.staleAfterDays) days")
+                    }
+                    Stepper(value: removalThreshold, in: store.policy.staleAfterDays ... 120) {
+                        LabeledContent("Suggest removal after", value: "\(store.policy.removalAfterDays) days")
+                    }
+                    Stepper(value: minimumUsageToKeep, in: 1 ... 20) {
+                        LabeledContent("Rarely used", value: "Fewer than \(store.policy.minimumUsageToKeep) uses")
+                    }
+                    Toggle("Include unused skills", isOn: neverUsedCountsAsStale)
+                }
+            } header: {
+                Text("Insights")
+            } footer: {
+                Text("Suggestions require verified history. Glance never removes a skill automatically.")
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var sourceSettings: some View {
+        Form {
+            Section {
+                Picker("Assistant", selection: sourceSelection) {
                     ForEach(store.availableSources) { source in
-                        Text(source.displayName)
-                            .tag(source.id)
+                        Text(source.displayName).tag(source.id)
                     }
                 }
                 .disabled(store.availableSources.count <= 1)
-            }
 
-            settingRow {
-                HStack {
-                    Text("Status")
+                LabeledContent("Status") {
+                    Label(store.currentDiagnostics.statusLabel, systemImage: sourceStatusSymbol)
                         .foregroundStyle(.secondary)
-                    Spacer()
-                    Text(store.currentDiagnostics.statusLabel)
-                        .fontWeight(.medium)
                 }
-            }
 
-            settingRow {
+                if store.isInventoryOnly {
+                    LabeledContent("Usage statistics", value: "Not supported yet")
+                    Text("Only global skill definitions are shown. Files on disk do not confirm that a skill is enabled.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let error = store.errorMessage {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(.callout)
+                }
+            } header: {
+                Text("Current Source")
+            } footer: {
                 Text(store.currentDiagnostics.summary)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            settingRow {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(store.usageEvidence.summary)
-                    Text("\(store.usageEvidence.filesRead) files read · \(store.usageEvidence.duplicates) duplicates excluded · \(store.usageEvidence.inferredIdentities) inferred event IDs")
-                    if let first = store.usageEvidence.observedFrom, let last = store.usageEvidence.observedThrough {
-                        Text("Observed records: \(first.formatted(date: .abbreviated, time: .omitted)) – \(last.formatted(date: .abbreviated, time: .omitted))")
-                    }
-                    ForEach(store.usageEvidence.sources, id: \.self) { source in
-                        Text((source as NSString).abbreviatingWithTildeInPath).textSelection(.enabled)
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-        })
-    }
-
-    private var overviewSection: AnyView {
-        AnyView(settingsSection(
-            title: "Overview",
-            detail: "Glance surfaces skills, MCPs, and cleanup candidates from the current source. These controls apply globally across sources. Rolling windows currently affect windowed sources only."
-        ) {
-            settingRow {
-                Picker("Default window", selection: windowSelection) {
-                    ForEach(store.availableWindows, id: \.rawValue) { window in
-                        Text(window.title)
-                            .tag(window as GlanceCore.RollingWindow)
-                    }
-                }
             }
 
-            settingRow {
-                Stepper(value: refreshInterval, in: 60 ... 3_600, step: 60) {
-                    Text("Refresh interval: \(Int(store.policy.refreshIntervalSeconds))s")
-                }
-            }
+            Section("Local Data") {
+                ForEach(store.currentDiagnostics.artifacts) { artifact in
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: artifact.kind == .directory ? "folder" : (artifact.kind == .command ? "terminal" : "doc.text"))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 18)
+                            .accessibilityHidden(true)
 
-            settingRow {
-                Stepper(value: staleThreshold, in: 1 ... 90, step: 1) {
-                    Text("Stale threshold: \(store.policy.staleAfterDays) days")
-                }
-            }
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(artifact.label)
+                                Spacer()
+                                Label(artifact.isPresent ? "Found" : "Missing",
+                                      systemImage: artifact.isPresent ? "checkmark.circle" : "exclamationmark.circle")
+                                    .foregroundStyle(.secondary)
+                                    .font(.caption)
+                            }
 
-            settingRow {
-                Stepper(value: removalThreshold, in: store.policy.staleAfterDays ... 120, step: 1) {
-                    Text("Removal threshold: \(store.policy.removalAfterDays) days")
-                }
-            }
-
-            settingRow {
-                Stepper(value: minimumUsageToKeep, in: 1 ... 20, step: 1) {
-                    Text("Rarely-used threshold: < \(store.policy.minimumUsageToKeep) uses")
-                }
-            }
-
-            settingRow {
-                Toggle("Treat never-used items as stale", isOn: neverUsedCountsAsStale)
-            }
-        })
-    }
-
-    private var sourcePathsSection: AnyView {
-        AnyView(settingsSection(title: "Source Paths", detail: "Paths are shown for the active source so it stays clear what Glance is reading.") {
-            ForEach(store.currentDiagnostics.artifacts) { artifact in
-                settingRow {
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Circle()
-                            .fill(artifact.isPresent ? Color.green.opacity(0.8) : Color.orange.opacity(0.75))
-                            .frame(width: 8, height: 8)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(artifact.label)
-                                .font(.callout.weight(.medium))
                             Text(artifact.displayPath)
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+
+            if store.isInventoryOnly {
+                Section("Inventory Scope") {
+                    Text(store.noticeMessage ?? store.currentDiagnostics.summary)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                Section {
+                    DisclosureGroup("Activity coverage", isExpanded: $showsDataDetails) {
+                        LabeledContent("Files read", value: store.usageEvidence.filesRead.formatted())
+                        LabeledContent("Duplicates excluded", value: store.usageEvidence.duplicates.formatted())
+                        LabeledContent("Inferred event IDs", value: store.usageEvidence.inferredIdentities.formatted())
+                        LabeledContent("Unreadable files", value: store.usageEvidence.skippedFiles.formatted())
+                        LabeledContent("Unparsed records", value: store.usageEvidence.skippedRecords.formatted())
+                        LabeledContent("Outside known inventory", value: store.usageEvidence.unmatchedRecords.formatted())
+
+                        if let first = store.usageEvidence.observedFrom, let last = store.usageEvidence.observedThrough {
+                            LabeledContent("First observed", value: first.formatted(date: .abbreviated, time: .shortened))
+                            LabeledContent("Last observed", value: last.formatted(date: .abbreviated, time: .shortened))
                         }
 
-                        Spacer(minLength: 8)
+                        ForEach(store.usageEvidence.sources, id: \.self) { source in
+                            Text((source as NSString).abbreviatingWithTildeInPath)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
 
-                        Text(artifact.isPresent ? "Found" : "Missing")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(artifact.isPresent ? Color.secondary : Color.orange)
+                        if let notice = store.noticeMessage, notice != store.usageEvidence.summary {
+                            Text(notice).font(.caption).foregroundStyle(.secondary)
+                        }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                } footer: {
+                    Text(store.usageEvidence.summary)
                 }
             }
-        })
-    }
 
-    private var aboutSection: AnyView {
-        AnyView(settingsSection(title: "About", detail: "Version details and update checks for this copy of Glance.") {
-            settingRow {
-                HStack(alignment: .firstTextBaseline, spacing: Metrics.inlinePadding) {
-                    Text("Version")
+            Section {
+                LabeledContent("Support report") {
+                    Button("Copy", action: copySupportReport)
+                    Button("Export…", action: exportSupportReport)
+                }
 
-                    Spacer(minLength: Metrics.inlinePadding)
-
-                    Text(appMetadata.versionDescription)
-                        .font(.body.monospacedDigit())
+                if let supportStatus {
+                    Label(supportStatus, systemImage: supportStatusIsError ? "exclamationmark.circle" : "checkmark.circle")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+            } header: {
+                Text("Diagnostics")
+            } footer: {
+                Text("Copy or export a report when troubleshooting a source.")
             }
-
-            settingRow {
-                HStack(alignment: .firstTextBaseline, spacing: Metrics.inlinePadding) {
-                    Text("Check for Updates…")
-
-                    Spacer(minLength: Metrics.inlinePadding)
-
-                    Button("Check Now") {
-                        updater.checkForUpdates()
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(!updater.canCheckForUpdates)
-                }
-            }
-        })
+        }
+        .formStyle(.grouped)
     }
 
-    private var supportSection: AnyView {
-        AnyView(settingsSection(title: "Support", detail: "Copy or export the current app diagnostics when you need help troubleshooting a source or environment issue.") {
-            settingRow {
-                HStack(alignment: .firstTextBaseline, spacing: Metrics.inlinePadding) {
-                    Text("Copy Support Report")
+    private var aboutSettings: some View {
+        VStack(spacing: 12) {
+            Spacer(minLength: 24)
 
-                    Spacer(minLength: Metrics.inlinePadding)
+            Image(systemName: "sparkles")
+                .font(.system(size: 40, weight: .medium))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 80, height: 80)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 18))
+                .accessibilityHidden(true)
 
-                    Button("Copy") {
-                        copySupportReport()
-                    }
-                    .buttonStyle(.bordered)
-                }
+            Text(appMetadata.applicationName)
+                .font(.largeTitle.weight(.semibold))
+            Text(appMetadata.versionDescription)
+                .font(.subheadline.monospacedDigit())
+                .foregroundStyle(.secondary)
+            Text("Skill activity across your coding assistants.")
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.top, 4)
+
+            Button("Check for Updates…") {
+                updater.checkForUpdates()
             }
+            .disabled(!updater.canCheckForUpdates)
+            .padding(.top, 12)
 
-            settingRow {
-                HStack(alignment: .firstTextBaseline, spacing: Metrics.inlinePadding) {
-                    Text("Export Support Report…")
-
-                    Spacer(minLength: Metrics.inlinePadding)
-
-                    Button("Export…") {
-                        exportSupportReport()
-                    }
-                    .buttonStyle(.bordered)
-                }
-            }
-
-            if let supportStatus {
-                settingRow {
-                    Text(supportStatus)
-                        .foregroundStyle(supportStatusIsError ? Color.orange : .secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-        })
-    }
-
-    private func settingsSection<Content: View>(
-        title: String,
-        detail: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: Metrics.sectionContentSpacing) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.headline.weight(.semibold))
-
-                Text(detail)
+            if !updater.canCheckForUpdates {
+                Text("Update checking is currently unavailable.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            VStack(alignment: .leading, spacing: Metrics.rowSpacing) {
-                content()
-            }
+            Spacer(minLength: 24)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Metrics.sectionPadding)
-        .background(
-            GlanceCardBackground(tone: .primary, cornerRadius: Metrics.sectionCornerRadius)
-        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(24)
     }
 
-    private func settingRow<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        content()
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, Metrics.inlinePadding)
-            .padding(.vertical, Metrics.rowVerticalPadding)
-            .background(
-                GlanceCardBackground(tone: .subtle, cornerRadius: Metrics.rowCornerRadius)
-            )
+    private var refreshIntervalLabel: String {
+        let minutes = Int(store.policy.refreshIntervalSeconds / 60)
+        return minutes == 1 ? "1 minute" : "\(minutes) minutes"
+    }
+
+    private var sourceStatusSymbol: String {
+        switch store.currentDiagnostics.readiness {
+        case .ready: return "checkmark.circle"
+        case .needsSetup: return "exclamationmark.circle"
+        case .unavailable: return "minus.circle"
+        }
     }
 
     private var sourceSelection: Binding<String> {
@@ -396,20 +382,4 @@ struct GlanceSettingsView: View {
             supportStatusIsError = true
         }
     }
-}
-
-private enum Metrics {
-    static let windowMinWidth: CGFloat = 500
-    static let windowIdealWidth: CGFloat = 520
-    static let windowMinHeight: CGFloat = 404
-    static let windowIdealHeight: CGFloat = 420
-    static let outerPadding: CGFloat = 18
-    static let sectionSpacing: CGFloat = 14
-    static let sectionPadding: CGFloat = 14
-    static let sectionCornerRadius: CGFloat = 14
-    static let sectionContentSpacing: CGFloat = 12
-    static let rowSpacing: CGFloat = 10
-    static let rowCornerRadius: CGFloat = 10
-    static let rowVerticalPadding: CGFloat = 10
-    static let inlinePadding: CGFloat = 12
 }

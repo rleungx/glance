@@ -20,10 +20,7 @@ public actor ClaudeUsageRepository: EvidenceReportingRepository, WarningReportin
 
     public func loadUsage(windows: [RollingWindow], now: Date) async throws -> UsageLoadResult {
         let installedSkills = try configLoader.loadInstalledSkills()
-        let configuredServers = try configLoader.loadConfiguredMCPServers().filter(\.enabled)
         let installedSkillMap = Dictionary(installedSkills.map { ($0.name.lowercased(), $0.name) }, uniquingKeysWith: { first, _ in first })
-        let serverNames = Set(configuredServers.map { $0.name.lowercased() })
-        let serverNameCandidates = serverNames.sorted { $0.count > $1.count }
         let cutoffDate = windows.map { $0.cutoffDate(relativeTo: now) }.min() ?? .distantPast
         let loadResult = try transcriptReader.loadObservedEvents(since: cutoffDate)
         warnings = loadResult.skippedFilesCount > 0 ? ["Some Claude transcripts were skipped, so these results may be incomplete."] : []
@@ -31,9 +28,7 @@ public actor ClaudeUsageRepository: EvidenceReportingRepository, WarningReportin
         evidence.sources = Array(Set(evidence.sources + configLoader.evidenceSources)).sorted()
         let events = loadResult.events.filter { $0.timestamp <= now }
         evidence.unmatchedRecords = events.filter { event in
-            if let skill = event.skillName { return installedSkillMap[skill.lowercased()] == nil }
-            let name = event.toolName.lowercased()
-            return name.hasPrefix("mcp__") && !serverNameCandidates.contains { name.hasPrefix("mcp__" + $0 + "__") }
+            return event.skillName.map { installedSkillMap[$0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()] == nil } ?? false
         }.count
         if evidence.unmatchedRecords > 0 { evidence.completeness = .partial }
         evidence.skippedRecords += loadResult.events.count - events.count
@@ -46,8 +41,6 @@ public actor ClaudeUsageRepository: EvidenceReportingRepository, WarningReportin
             output[window] = buildCapabilities(
                 installedSkills: installedSkills,
                 installedSkillMap: installedSkillMap,
-                configuredServers: configuredServers,
-                serverNameCandidates: serverNameCandidates,
                 events: eventsByWindow[window] ?? []
             )
         }
@@ -64,8 +57,6 @@ public actor ClaudeUsageRepository: EvidenceReportingRepository, WarningReportin
     private func buildCapabilities(
         installedSkills: [ClaudeInstalledSkill],
         installedSkillMap: [String: String],
-        configuredServers: [ClaudeConfiguredMCPServer],
-        serverNameCandidates: [String],
         events: [ClaudeObservedToolEvent]
     ) -> [CapabilityUsage] {
         var capabilities: [CapabilityID: CapabilityUsage] = [:]
@@ -75,44 +66,12 @@ public actor ClaudeUsageRepository: EvidenceReportingRepository, WarningReportin
             capabilities[id] = CapabilityUsage(id: id, usageCount: 0, installedButUnused: false)
         }
 
-        for server in configuredServers {
-            let normalized = server.name.lowercased()
-            let id = CapabilityID(kind: .mcpServer, namespace: normalized, name: normalized)
-            capabilities[id] = CapabilityUsage(id: id, usageCount: 0, installedButUnused: false)
-        }
-
-        var aggregatedServerUsage: [CapabilityID: CapabilityUsage] = [:]
-
         for event in events {
-            let normalizedToolName = event.toolName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-
-            let skillName = event.skillName?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                ?? normalizedToolName
+            guard let skillName = event.skillName?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else { continue }
             if let canonicalSkill = installedSkillMap[skillName] {
                 let id = CapabilityID(kind: .skill, name: canonicalSkill)
                 capabilities[id] = merge(capabilities[id] ?? CapabilityUsage(id: id, usageCount: 0, installedButUnused: false), with: singleEventUsage(id: id, timestamp: event.timestamp, reference: event.reference))
-                continue
             }
-
-            let mcpName = normalizedToolName.hasPrefix("mcp__") ? String(normalizedToolName.dropFirst(5)) : normalizedToolName
-            let separator = normalizedToolName.hasPrefix("mcp__") ? "__" : "_"
-            guard let matchingServer = serverNameCandidates.first(where: { mcpName.hasPrefix($0 + separator) }) else {
-                continue
-            }
-
-            let suffixIndex = mcpName.index(mcpName.startIndex, offsetBy: matchingServer.count + separator.count)
-            let toolName = String(mcpName[suffixIndex...])
-            guard !toolName.isEmpty else { continue }
-
-            let toolID = CapabilityID(kind: .mcpTool, namespace: matchingServer, name: toolName)
-            capabilities[toolID] = merge(capabilities[toolID] ?? CapabilityUsage(id: toolID, usageCount: 0, installedButUnused: false), with: singleEventUsage(id: toolID, timestamp: event.timestamp, reference: event.reference))
-
-            let serverID = CapabilityID(kind: .mcpServer, namespace: matchingServer, name: matchingServer)
-            aggregatedServerUsage[serverID] = merge(aggregatedServerUsage[serverID] ?? CapabilityUsage(id: serverID, usageCount: 0, installedButUnused: false), with: singleEventUsage(id: serverID, timestamp: event.timestamp, reference: event.reference))
-        }
-
-        for (serverID, usage) in aggregatedServerUsage {
-            capabilities[serverID] = merge(capabilities[serverID] ?? CapabilityUsage(id: serverID, usageCount: 0, installedButUnused: false), with: usage)
         }
 
         return Array(capabilities.values)
